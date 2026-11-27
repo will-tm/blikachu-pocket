@@ -8,6 +8,8 @@
 #include "gfx.h"
 #include "uf2_disk.h"
 #include "external/font8x8_basic.h"
+#include "rle565.h"
+#include "dfu_icon.h"
 
 #define BOOT_BG RGB565(14, 19, 27)
 static const struct device *const lcd = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
@@ -47,6 +49,28 @@ static void text(int y, const char *s, uint16_t ink)
 	(void)display_write(lcd, (LCD_WIDTH - w) / 2, y, &desc, pixels);
 }
 
+static void draw_icon(void)
+{
+	struct rle565 rle = { .next = dfu_icon_rle, .end = dfu_icon_rle + ARRAY_SIZE(dfu_icon_rle) };
+	for (int row = 0; row < DFU_ICON_H; row += GFX_LARGE_FONT_H) {
+		int rows = MIN(DFU_ICON_H - row, GFX_LARGE_FONT_H);
+		int count = DFU_ICON_W * rows;
+		if (!rle565_read(&rle, pixels, count)) {
+			return;
+		}
+		for (int i = 0; i < count; i++) {
+			if (pixels[i] == RGB565(255, 0, 255)) {
+				pixels[i] = BOOT_BG;
+			}
+		}
+		struct display_buffer_descriptor desc = {
+			.width = DFU_ICON_W, .pitch = DFU_ICON_W, .height = rows,
+			.buf_size = count * sizeof(uint16_t),
+		};
+		(void)display_write(lcd, (LCD_WIDTH - DFU_ICON_W) / 2, 33 + row, &desc, pixels);
+	}
+}
+
 static void power_hold(void)
 {
 	const struct gpio_dt_spec d = GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), pwr_d_gpios);
@@ -69,14 +93,9 @@ void dfu_screen_message(const char *title, const char *subtitle)
 	(void)pwm_set_dt(&backlight, PWM_USEC(20), PWM_USEC(10));
 	(void)display_blanking_off(lcd);
 	rect(0, 0, LCD_PANEL_W, LCD_PANEL_H, BOOT_BG);
-	/* USB plug symbol. */
-	rect(108, 68, 24, 22, COLOR_PIKACHU);
-	rect(113, 57, 14, 11, COLOR_PIKACHU);
-	rect(116, 59, 2, 6, BOOT_BG);
-	rect(122, 59, 2, 6, BOOT_BG);
-	rect(118, 90, 4, 17, COLOR_PIKACHU);
-	text(126, title, COLOR_PIKACHU);
-	text(150, subtitle, COLOR_WHITE);
+	draw_icon();
+	text(145, title, COLOR_PIKACHU);
+	text(168, subtitle, COLOR_WHITE);
 }
 
 void dfu_screen_progress(unsigned percent)
@@ -85,9 +104,9 @@ void dfu_screen_progress(unsigned percent)
 		return;
 	}
 	int width = 200 * MIN(percent, 100u) / 100;
-	rect(20, 174, 200, 8, COLOR_DGRAY);
+	rect(20, 192, 200, 8, COLOR_DGRAY);
 	if (width) {
-		rect(20, 174, width, 8, COLOR_PIKACHU);
+		rect(20, 192, width, 8, COLOR_PIKACHU);
 	}
 }
 
