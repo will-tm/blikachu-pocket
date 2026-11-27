@@ -1,0 +1,31 @@
+--- a/libretro.c
++++ b/libretro.c
+@@ -259,7 +259,14 @@
+    safety = 0x80;
+    GFX.Screen_buffer = (uint8_t *) linearMemAlign(GFX.Pitch * h + safety, 0x80);
+ #else
++#ifdef SNES_READONLY_ROM
++   /* A stopped renderer can lend its screen allocation to serialization. */
++   size_t screen_bytes = GFX.Pitch * h + safety;
++   size_t state_bytes = retro_serialize_size();
++   GFX.Screen_buffer = (uint8_t *) malloc(screen_bytes > state_bytes ? screen_bytes : state_bytes);
++#else
+    GFX.Screen_buffer = (uint8_t *) malloc(GFX.Pitch * h + safety);
++#endif
+ #endif
+    GFX.SubScreen_buffer = (uint8_t *) malloc(GFX.Pitch * h + safety);
+    GFX.ZBuffer_buffer = (uint8_t *) malloc((GFX.Pitch >> 1) * h + safety);
+@@ -280,6 +287,13 @@
+ 
+    GFX.Delta = (GFX.SubScreen - GFX.Screen) >> 1;
+ }
++
++#ifdef SNES_READONLY_ROM
++void *lr_snes9x2005_state_scratch(size_t size)
++{
++   return size <= retro_serialize_size() ? GFX.Screen_buffer : NULL;
++}
++#endif
+ 
+ static void init_sfc_setting(void)
+ {

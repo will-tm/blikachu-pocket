@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:cc="http://creativecommons.org/ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" sodipodi:docname="Pikachu SVG File.svg" inkscape:version="1.0 (4035a4fb49, 2020-05-01)" id="svg1768" version="1.1" viewBox="0 0 210 297" height="297mm" width="210mm">
+  <defs id="defs1762" />
+  <sodipodi:namedview inkscape:window-maximized="0" inkscape:window-y="0" inkscape:window-x="26" inkscape:window-height="728" inkscape:window-width="1274" inkscape:snap-global="false" showgrid="false" inkscape:document-rotation="0" inkscape:current-layer="layer1" inkscape:document-units="mm" inkscape:cy="290.59384" inkscape:cx="422.07764" inkscape:zoom="0.7" inkscape:pageshadow="2" inkscape:pageopacity="0.0" borderopacity="1.0" bordercolor="#666666" pagecolor="#ffffff" id="base" />
+  <metadata id="metadata1765">
+    <rdf:RDF>
+      <cc:Work rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title />
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <g id="layer1" inkscape:groupmode="layer" inkscape:label="Layer 1">
+    <g transform="matrix(0.45735972,0,0,0.45735972,24.91995,6.5795449)" id="g2864">
+      <g id="g2739" transform="translate(-2.9603646e-6,-0.53453907)">
+        <path id="path2720" d="m 78.864771,116.78246 c -4.384301,0.0416 -8.259658,2.6156 -11.875504,6.48436 2.161753,7.02141 5.333958,12.67332 8.671317,15.10037 0.238991,0.19133 0.463965,0.33716 0.717769,0.46664 0.258463,0.15067 0.517493,0.2879 0.7768,0.39791 2.879685,1.22168 5.430726,0.3303 8.077704,-2.82309 2.273054,-2.70793 4.549656,-7.4259 6.397133,-13.17903 -4.747986,-4.6041 -8.948973,-6.4834 -12.765219,-6.44716 z" style="fill:#ee7277;fill-opacity:1;stroke-width:0.251929" />
+      </g>
+    </g>
+  </g>
+</svg>

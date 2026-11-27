@@ -1,0 +1,11 @@
+--- a/modules/fatfs/zephyr_fatfs_config.h
++++ b/modules/fatfs/zephyr_fatfs_config.h
+@@ -68,6 +68,8 @@
+ #if defined(CONFIG_FS_FATFS_REENTRANT)
+ #undef FF_FS_REENTRANT
+ #undef FF_FS_TIMEOUT
++#undef FF_FS_LOCK
++#define FF_FS_LOCK CONFIG_FS_FATFS_NUM_FILES
+ #include <zephyr/kernel.h>
+ #define FF_FS_REENTRANT		CONFIG_FS_FATFS_REENTRANT
+ #define FF_FS_TIMEOUT		K_FOREVER

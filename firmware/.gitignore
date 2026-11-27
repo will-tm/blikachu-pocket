@@ -1,0 +1,33 @@
+# Build output
+build*/
+cmake-build*/
+
+# West workspace and SDK dependencies
+.west/
+deps/
+
+# Python virtual environment
+.venv/
+
+# Python bytecode caches
+__pycache__/
+
+# Editor/IDE
+.vscode/
+.idea/
+.history/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Cache
+.cache/
+
+# Local TODO list
+TODO.md
+
+# Packaged firmware artifacts
+out/

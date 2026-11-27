@@ -1,0 +1,46 @@
+# West manifest for blikachu-pocket (BL618)
+#
+# Setup (from this directory):
+#   ./build.sh
+#
+# (build.sh handles venv + west init + west update on first run)
+#
+# Zephyr: pinned to the v4.5.0 release. The BL61x USB device
+# controller is not upstream and rides on top as patches/0003 (from
+# will-tm/zephyr).
+
+manifest:
+  version: "1.0"
+
+  remotes:
+    - name: zephyr
+      url-base: https://github.com/zephyrproject-rtos
+
+  defaults:
+    remote: zephyr
+
+  projects:
+    - name: zephyr
+      revision: v4.5.0
+      import:
+        path-prefix: deps
+
+    - name: libretro-common
+      url: https://github.com/libretro/libretro-common
+      revision: 09b55b683764d49ae1e640d7db5069931d6d2d40
+      path: deps/libretro/common
+
+    - name: libretro-gambatte
+      url: https://github.com/libretro/gambatte-libretro
+      revision: 138bcbbf311300a271896bf93a76370c72cab339
+      path: deps/libretro/gambatte
+
+    - name: libretro-fceumm
+      url: https://github.com/libretro/libretro-fceumm
+      revision: 236ccdfc911e84c60fea6b9d0699c2d440a8de14
+      path: deps/libretro/fceumm
+
+    - name: libretro-snes9x2005
+      url: https://github.com/libretro/snes9x2005
+      revision: deb49d80d1836e3e737480a326e31a54c46c04ae
+      path: deps/libretro/snes9x2005

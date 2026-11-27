@@ -1,0 +1,821 @@
+--- /dev/null
++++ b/source/cpufetch.h
+@@ -0,0 +1,64 @@
++#include "../copyright"
++#ifndef _CPUFETCH_H_
++#define _CPUFETCH_H_
++
++/* Program fetches wrap within PB and follow each 4 KiB mapping. A borrowed
++ * cartridge has no writable padding beyond its mapped extent. */
++static INLINE uint8_t S9xPCRead(unsigned offset)
++{
++#if defined(SNES_READONLY_ROM) && !defined(SA1_OPCODES)
++   uint32_t address = ICPU.ShiftedPB |
++      (uint16_t)((uintptr_t)CPU.PC - (uintptr_t)CPU.PCBase + offset);
++   uint8_t *map = Memory.Map[address >> MEMMAP_SHIFT];
++   if ((uintptr_t)map >= MAP_LAST)
++      return map[address & 0xffff];
++   int32_t cycles = CPU.Cycles;
++   uint8_t value = S9xGetByte(address);
++   CPU.Cycles = cycles;
++   return value;
++#else
++   return CPU.PC[offset];
++#endif
++}
++
++static INLINE uint8_t S9xPCReadNext(void)
++{
++   uint8_t value = S9xPCRead(0);
++   CPU.PC++;
++   return value;
++}
++
++static INLINE uint16_t S9xPCReadWord(unsigned offset)
++{
++   uint16_t low = S9xPCRead(offset);
++   return low | ((uint16_t)S9xPCRead(offset + 1) << 8);
++}
++
++static INLINE uint32_t S9xPCReadLong(void)
++{
++   uint32_t low = S9xPCReadWord(0);
++   return low | ((uint32_t)S9xPCRead(2) << 16);
++}
++
++static INLINE void S9xPCPrepare(void)
++{
++#if defined(SNES_READONLY_ROM) && !defined(SA1_OPCODES)
++   uintptr_t pc = (uintptr_t)CPU.PC - (uintptr_t)CPU.PCBase;
++   uint32_t address = ICPU.ShiftedPB | (uint16_t)pc;
++   if (pc > 0xffff || CPU.PCBase != Memory.Map[address >> MEMMAP_SHIFT])
++      S9xSetPCBase(address);
++#endif
++}
++
++static INLINE uint16_t S9xPCImmediateWord(uint32_t address)
++{
++#if defined(SNES_READONLY_ROM) && !defined(SA1_OPCODES)
++   if ((address & 0xffff) == 0xffff)
++   {
++      OpenBus = S9xGetByte(address);
++      return OpenBus | ((uint16_t)S9xGetByte(address & 0xff0000) << 8);
++   }
++#endif
++   return S9xGetWord(address);
++}
++#endif
+--- a/source/cpuaddr.h
++++ b/source/cpuaddr.h
+@@ -4,24 +4,25 @@
+ #define _CPUADDR_H_
+ 
+ #include <retro_inline.h>
++#include "cpufetch.h"
+ 
+ extern int32_t OpAddress;
+ 
+ static INLINE void Immediate8(void)
+ {
+-   OpAddress = ICPU.ShiftedPB + CPU.PC - CPU.PCBase;
++   OpAddress = ICPU.ShiftedPB | (uint16_t)((uintptr_t)CPU.PC - (uintptr_t)CPU.PCBase);
+    CPU.PC++;
+ }
+ 
+ static INLINE void Immediate16(void)
+ {
+-   OpAddress = ICPU.ShiftedPB + CPU.PC - CPU.PCBase;
++   OpAddress = ICPU.ShiftedPB | (uint16_t)((uintptr_t)CPU.PC - (uintptr_t)CPU.PCBase);
+    CPU.PC += 2;
+ }
+ 
+ static INLINE void Relative(void)
+ {
+-   int8_t Int8 = *CPU.PC++;
++   int8_t Int8 = S9xPCReadNext();
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed;
+ #endif
+@@ -31,9 +32,9 @@
+ static INLINE void RelativeLong(void)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   OpAddress = *(uint16_t*) CPU.PC;
+-#else
+-   OpAddress = CPU.PC[0] + (CPU.PC[1] << 8);
++   OpAddress = S9xPCReadWord(0);
++#else
++   OpAddress = S9xPCRead(0) + (S9xPCRead(1) << 8);
+ #endif
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeedx2 + ONE_CYCLE;
+@@ -46,14 +47,14 @@
+ static INLINE void AbsoluteIndexedIndirect(bool read)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   OpAddress = (ICPU.Registers.X.W + * (uint16_t*) CPU.PC) & 0xffff;
+-#else
+-   OpAddress = (ICPU.Registers.X.W + CPU.PC[0] + (CPU.PC[1] << 8)) & 0xffff;
+-#endif
+-#ifndef SA1_OPCODES
+-   CPU.Cycles += CPU.MemSpeedx2;
+-#endif
+-   OpenBus = CPU.PC[1];
++   OpAddress = (ICPU.Registers.X.W + S9xPCReadWord(0)) & 0xffff;
++#else
++   OpAddress = (ICPU.Registers.X.W + S9xPCRead(0) + (S9xPCRead(1) << 8)) & 0xffff;
++#endif
++#ifndef SA1_OPCODES
++   CPU.Cycles += CPU.MemSpeedx2;
++#endif
++   OpenBus = S9xPCRead(1);
+    CPU.PC += 2;
+    OpAddress = S9xGetWord(ICPU.ShiftedPB + OpAddress);
+    if (read)
+@@ -63,14 +64,14 @@
+ static INLINE void AbsoluteIndirectLong(bool read)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   OpAddress = *(uint16_t*) CPU.PC;
+-#else
+-   OpAddress = CPU.PC[0] + (CPU.PC[1] << 8);
+-#endif
+-#ifndef SA1_OPCODES
+-   CPU.Cycles += CPU.MemSpeedx2;
+-#endif
+-   OpenBus = CPU.PC[1];
++   OpAddress = S9xPCReadWord(0);
++#else
++   OpAddress = S9xPCRead(0) + (S9xPCRead(1) << 8);
++#endif
++#ifndef SA1_OPCODES
++   CPU.Cycles += CPU.MemSpeedx2;
++#endif
++   OpenBus = S9xPCRead(1);
+    CPU.PC += 2;
+    if (read)
+       OpAddress = S9xGetWord(OpAddress) | ((OpenBus = S9xGetByte(OpAddress + 2)) << 16);
+@@ -81,14 +82,14 @@
+ static INLINE void AbsoluteIndirect(bool read)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   OpAddress = *(uint16_t*) CPU.PC;
+-#else
+-   OpAddress = CPU.PC[0] + (CPU.PC[1] << 8);
+-#endif
+-#ifndef SA1_OPCODES
+-   CPU.Cycles += CPU.MemSpeedx2;
+-#endif
+-   OpenBus = CPU.PC[1];
++   OpAddress = S9xPCReadWord(0);
++#else
++   OpAddress = S9xPCRead(0) + (S9xPCRead(1) << 8);
++#endif
++#ifndef SA1_OPCODES
++   CPU.Cycles += CPU.MemSpeedx2;
++#endif
++   OpenBus = S9xPCRead(1);
+    CPU.PC += 2;
+    OpAddress = S9xGetWord(OpAddress);
+    if (read)
+@@ -99,12 +100,12 @@
+ static INLINE void Absolute(bool read)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   OpAddress = *(uint16_t*) CPU.PC + ICPU.ShiftedDB;
+-#else
+-   OpAddress = CPU.PC[0] + (CPU.PC[1] << 8) + ICPU.ShiftedDB;
+-#endif
+-   if (read)
+-      OpenBus = CPU.PC[1];
++   OpAddress = S9xPCReadWord(0) + ICPU.ShiftedDB;
++#else
++   OpAddress = S9xPCRead(0) + (S9xPCRead(1) << 8) + ICPU.ShiftedDB;
++#endif
++   if (read)
++      OpenBus = S9xPCRead(1);
+    CPU.PC += 2;
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeedx2;
+@@ -114,17 +115,17 @@
+ static INLINE void AbsoluteLong(bool read)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   OpAddress = (*(uint32_t*) CPU.PC) & 0xffffff;
++   OpAddress = (S9xPCReadLong()) & 0xffffff;
+ #elif defined FAST_ALIGNED_LSB_WORD_ACCESS
+    if (((int32_t) CPU.PC & 1) == 0)
+-      OpAddress = (*(uint16_t*) CPU.PC) + (CPU.PC[2] << 16);
+-   else
+-      OpAddress = *CPU.PC + ((*(uint16_t*) (CPU.PC + 1)) << 8);
+-#else
+-   OpAddress = CPU.PC[0] + (CPU.PC[1] << 8) + (CPU.PC[2] << 16);
+-#endif
+-   if (read)
+-      OpenBus = CPU.PC[2];
++      OpAddress = (S9xPCReadWord(0)) + (S9xPCRead(2) << 16);
++   else
++      OpAddress = S9xPCRead(0) + ((S9xPCReadWord(1)) << 8);
++#else
++   OpAddress = S9xPCRead(0) + (S9xPCRead(1) << 8) + (S9xPCRead(2) << 16);
++#endif
++   if (read)
++      OpenBus = S9xPCRead(2);
+    CPU.PC += 3;
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeedx2 + CPU.MemSpeed;
+@@ -134,8 +135,8 @@
+ static INLINE void Direct(bool read)
+ {
+    if (read)
+-      OpenBus = *CPU.PC;
+-   OpAddress = (*CPU.PC++ + ICPU.Registers.D.W) & 0xffff;
++      OpenBus = S9xPCRead(0);
++   OpAddress = (S9xPCReadNext() + ICPU.Registers.D.W) & 0xffff;
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed;
+ #endif
+@@ -143,8 +144,8 @@
+ 
+ static INLINE void DirectIndirectIndexed(bool read)
+ {
+-   OpenBus = *CPU.PC;
+-   OpAddress = (*CPU.PC++ + ICPU.Registers.D.W) & 0xffff;
++   OpenBus = S9xPCRead(0);
++   OpAddress = (S9xPCReadNext() + ICPU.Registers.D.W) & 0xffff;
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed;
+ #endif
+@@ -156,8 +157,8 @@
+ 
+ static INLINE void DirectIndirectIndexedLong(bool read)
+ {
+-   OpenBus = *CPU.PC;
+-   OpAddress = (*CPU.PC++ + ICPU.Registers.D.W) & 0xffff;
++   OpenBus = S9xPCRead(0);
++   OpAddress = (S9xPCReadNext() + ICPU.Registers.D.W) & 0xffff;
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed;
+ #endif
+@@ -169,8 +170,8 @@
+ 
+ static INLINE void DirectIndexedIndirect(bool read)
+ {
+-   OpenBus = *CPU.PC;
+-   OpAddress = (*CPU.PC++ + ICPU.Registers.D.W + ICPU.Registers.X.W) & 0xffff;
++   OpenBus = S9xPCRead(0);
++   OpAddress = (S9xPCReadNext() + ICPU.Registers.D.W + ICPU.Registers.X.W) & 0xffff;
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed;
+ #endif
+@@ -186,8 +187,8 @@
+ static INLINE void DirectIndexedX(bool read)
+ {
+    if (read)
+-      OpenBus = *CPU.PC;
+-   OpAddress = (*CPU.PC++ + ICPU.Registers.D.W + ICPU.Registers.X.W);
++      OpenBus = S9xPCRead(0);
++   OpAddress = (S9xPCReadNext() + ICPU.Registers.D.W + ICPU.Registers.X.W);
+    OpAddress &= CheckEmulation() ? 0xff : 0xffff;
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed + ONE_CYCLE;
+@@ -197,8 +198,8 @@
+ static INLINE void DirectIndexedY(bool read)
+ {
+    if (read)
+-      OpenBus = *CPU.PC;
+-   OpAddress = (*CPU.PC++ + ICPU.Registers.D.W + ICPU.Registers.Y.W);
++      OpenBus = S9xPCRead(0);
++   OpAddress = (S9xPCReadNext() + ICPU.Registers.D.W + ICPU.Registers.Y.W);
+    OpAddress &= CheckEmulation() ? 0xff : 0xffff;
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed + ONE_CYCLE;
+@@ -208,12 +209,12 @@
+ static INLINE void AbsoluteIndexedX(bool read)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   OpAddress = ICPU.ShiftedDB + *(uint16_t*) CPU.PC + ICPU.Registers.X.W;
+-#else
+-   OpAddress = ICPU.ShiftedDB + CPU.PC[0] + (CPU.PC[1] << 8) + ICPU.Registers.X.W;
+-#endif
+-   if (read)
+-      OpenBus = CPU.PC[1];
++   OpAddress = ICPU.ShiftedDB + S9xPCReadWord(0) + ICPU.Registers.X.W;
++#else
++   OpAddress = ICPU.ShiftedDB + S9xPCRead(0) + (S9xPCRead(1) << 8) + ICPU.Registers.X.W;
++#endif
++   if (read)
++      OpenBus = S9xPCRead(1);
+    CPU.PC += 2;
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeedx2;
+@@ -223,12 +224,12 @@
+ static INLINE void AbsoluteIndexedY(bool read)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   OpAddress = ICPU.ShiftedDB + *(uint16_t*) CPU.PC + ICPU.Registers.Y.W;
+-#else
+-   OpAddress = ICPU.ShiftedDB + CPU.PC[0] + (CPU.PC[1] << 8) + ICPU.Registers.Y.W;
+-#endif
+-   if (read)
+-      OpenBus = CPU.PC[1];
++   OpAddress = ICPU.ShiftedDB + S9xPCReadWord(0) + ICPU.Registers.Y.W;
++#else
++   OpAddress = ICPU.ShiftedDB + S9xPCRead(0) + (S9xPCRead(1) << 8) + ICPU.Registers.Y.W;
++#endif
++   if (read)
++      OpenBus = S9xPCRead(1);
+    CPU.PC += 2;
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeedx2;
+@@ -238,17 +239,17 @@
+ static INLINE void AbsoluteLongIndexedX(bool read)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-    OpAddress = (*(uint32_t*) CPU.PC + ICPU.Registers.X.W) & 0xffffff;
++    OpAddress = (S9xPCReadLong() + ICPU.Registers.X.W) & 0xffffff;
+ #elif defined FAST_ALIGNED_LSB_WORD_ACCESS
+    if (((int32_t) CPU.PC & 1) == 0)
+-       OpAddress = ((*(uint16_t*) CPU.PC) + (CPU.PC[2] << 16) + ICPU.Registers.X.W) & 0xFFFFFF;
+-   else
+-       OpAddress = (*CPU.PC + ((*(uint16_t*) (CPU.PC + 1)) << 8) + ICPU.Registers.X.W) & 0xFFFFFF;
+-#else
+-    OpAddress = (CPU.PC[0] + (CPU.PC[1] << 8) + (CPU.PC[2] << 16) + ICPU.Registers.X.W) & 0xffffff;
++       OpAddress = ((S9xPCReadWord(0)) + (S9xPCRead(2) << 16) + ICPU.Registers.X.W) & 0xFFFFFF;
++   else
++       OpAddress = (S9xPCRead(0) + ((S9xPCReadWord(1)) << 8) + ICPU.Registers.X.W) & 0xFFFFFF;
++#else
++    OpAddress = (S9xPCRead(0) + (S9xPCRead(1) << 8) + (S9xPCRead(2) << 16) + ICPU.Registers.X.W) & 0xffffff;
+ #endif
+     if (read)
+-       OpenBus = CPU.PC[2];
++       OpenBus = S9xPCRead(2);
+    CPU.PC += 3;
+ #ifndef SA1_OPCODES
+     CPU.Cycles += CPU.MemSpeedx2 + CPU.MemSpeed;
+@@ -257,8 +258,8 @@
+ 
+ static INLINE void DirectIndirect(bool read)
+ {
+-   OpenBus = *CPU.PC;
+-   OpAddress = (*CPU.PC++ + ICPU.Registers.D.W) & 0xffff;
++   OpenBus = S9xPCRead(0);
++   OpAddress = (S9xPCReadNext() + ICPU.Registers.D.W) & 0xffff;
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed;
+ #endif
+@@ -270,8 +271,8 @@
+ 
+ static INLINE void DirectIndirectLong(bool read)
+ {
+-   OpenBus = *CPU.PC;
+-   OpAddress = (*CPU.PC++ + ICPU.Registers.D.W) & 0xffff;
++   OpenBus = S9xPCRead(0);
++   OpAddress = (S9xPCReadNext() + ICPU.Registers.D.W) & 0xffff;
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed;
+ #endif
+@@ -284,8 +285,8 @@
+ static INLINE void StackRelative(bool read)
+ {
+    if (read)
+-      OpenBus = *CPU.PC;
+-   OpAddress = (*CPU.PC++ + ICPU.Registers.S.W) & 0xffff;
++      OpenBus = S9xPCRead(0);
++   OpAddress = (S9xPCReadNext() + ICPU.Registers.S.W) & 0xffff;
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed + ONE_CYCLE;
+ #endif
+@@ -293,8 +294,8 @@
+ 
+ static INLINE void StackRelativeIndirectIndexed(bool read)
+ {
+-   OpenBus = *CPU.PC;
+-   OpAddress = (*CPU.PC++ + ICPU.Registers.S.W) & 0xffff;
++   OpenBus = S9xPCRead(0);
++   OpAddress = (S9xPCReadNext() + ICPU.Registers.S.W) & 0xffff;
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed + TWO_CYCLES;
+ #endif
+--- a/source/cpuops.c
++++ b/source/cpuops.c
+@@ -28,7 +28,7 @@
+ static void Op69M0(void)
+ {
+    Immediate16();
+-   ADC16();
++   ADC16Value(S9xPCImmediateWord(OpAddress));
+ }
+ 
+ static void Op65M1(void)
+@@ -202,7 +202,7 @@
+ /* AND */
+ static void Op29M1(void)
+ {
+-   ICPU.Registers.AL &= *CPU.PC++;
++   ICPU.Registers.AL &= S9xPCReadNext();
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed;
+ #endif
+@@ -212,9 +212,9 @@
+ static void Op29M0(void)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   ICPU.Registers.A.W &= *(uint16_t*) CPU.PC;
++   ICPU.Registers.A.W &= S9xPCReadWord(0);
+ #else
+-   ICPU.Registers.A.W &= *CPU.PC + (*(CPU.PC + 1) << 8);
++   ICPU.Registers.A.W &= S9xPCRead(0) + (S9xPCRead(1) << 8);
+ #endif
+    CPU.PC += 2;
+ #ifndef SA1_OPCODES
+@@ -453,7 +453,7 @@
+ /* BIT */
+ static void Op89M1(void)
+ {
+-   ICPU._Zero = ICPU.Registers.AL & *CPU.PC++;
++   ICPU._Zero = ICPU.Registers.AL & S9xPCReadNext();
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed;
+ #endif
+@@ -462,9 +462,9 @@
+ static void Op89M0(void)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   ICPU._Zero = (ICPU.Registers.A.W & *(uint16_t*) CPU.PC) != 0;
++   ICPU._Zero = (ICPU.Registers.A.W & S9xPCReadWord(0)) != 0;
+ #else
+-   ICPU._Zero = (ICPU.Registers.A.W & (*CPU.PC + (*(CPU.PC + 1) << 8))) != 0;
++   ICPU._Zero = (ICPU.Registers.A.W & (S9xPCRead(0) + (S9xPCRead(1) << 8))) != 0;
+ #endif
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeedx2;
+@@ -523,7 +523,7 @@
+ /* CMP */
+ static void OpC9M1(void)
+ {
+-   int32_t Int32 = (int32_t) ICPU.Registers.AL - (int32_t) *CPU.PC++;
++   int32_t Int32 = (int32_t) ICPU.Registers.AL - (int32_t) S9xPCReadNext();
+    ICPU._Carry = Int32 >= 0;
+    SetZN8((uint8_t) Int32);
+ #ifndef SA1_OPCODES
+@@ -534,9 +534,9 @@
+ static void OpC9M0(void)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   int32_t Int32 = (int32_t) ICPU.Registers.A.W - (int32_t) *(uint16_t*)CPU.PC;
++   int32_t Int32 = (int32_t) ICPU.Registers.A.W - (int32_t) S9xPCReadWord(0);
+ #else
+-   int32_t Int32 = (int32_t) ICPU.Registers.A.W - (int32_t)(*CPU.PC + (*(CPU.PC + 1) << 8));
++   int32_t Int32 = (int32_t) ICPU.Registers.A.W - (int32_t)(S9xPCRead(0) + (S9xPCRead(1) << 8));
+ #endif
+    ICPU._Carry = Int32 >= 0;
+    SetZN16((uint16_t) Int32);
+@@ -717,7 +717,7 @@
+ /* CMX */
+ static void OpE0X1(void)
+ {
+-   int32_t Int32 = (int32_t) ICPU.Registers.XL - (int32_t) *CPU.PC++;
++   int32_t Int32 = (int32_t) ICPU.Registers.XL - (int32_t) S9xPCReadNext();
+    ICPU._Carry = Int32 >= 0;
+    SetZN8((uint8_t) Int32);
+ #ifndef SA1_OPCODES
+@@ -728,9 +728,9 @@
+ static void OpE0X0(void)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   int32_t Int32 = (int32_t) ICPU.Registers.X.W - (int32_t) *(uint16_t*)CPU.PC;
++   int32_t Int32 = (int32_t) ICPU.Registers.X.W - (int32_t) S9xPCReadWord(0);
+ #else
+-   int32_t Int32 = (int32_t) ICPU.Registers.X.W - (int32_t)(*CPU.PC + (*(CPU.PC + 1) << 8));
++   int32_t Int32 = (int32_t) ICPU.Registers.X.W - (int32_t)(S9xPCRead(0) + (S9xPCRead(1) << 8));
+ #endif
+    ICPU._Carry = Int32 >= 0;
+    SetZN16((uint16_t) Int32);
+@@ -767,7 +767,7 @@
+ /* CMY */
+ static void OpC0X1(void)
+ {
+-   int32_t Int32 = (int32_t) ICPU.Registers.YL - (int32_t) *CPU.PC++;
++   int32_t Int32 = (int32_t) ICPU.Registers.YL - (int32_t) S9xPCReadNext();
+    ICPU._Carry = Int32 >= 0;
+    SetZN8((uint8_t) Int32);
+ #ifndef SA1_OPCODES
+@@ -778,9 +778,9 @@
+ static void OpC0X0(void)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   int32_t Int32 = (int32_t) ICPU.Registers.Y.W - (int32_t) *(uint16_t*)CPU.PC;
++   int32_t Int32 = (int32_t) ICPU.Registers.Y.W - (int32_t) S9xPCReadWord(0);
+ #else
+-   int32_t Int32 = (int32_t) ICPU.Registers.Y.W - (int32_t)(*CPU.PC + (*(CPU.PC + 1) << 8));
++   int32_t Int32 = (int32_t) ICPU.Registers.Y.W - (int32_t)(S9xPCRead(0) + (S9xPCRead(1) << 8));
+ #endif
+    ICPU._Carry = Int32 >= 0;
+    SetZN16((uint16_t) Int32);
+@@ -876,7 +876,7 @@
+ /* EOR */
+ static void Op49M1(void)
+ {
+-   ICPU.Registers.AL ^= *CPU.PC++;
++   ICPU.Registers.AL ^= S9xPCReadNext();
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed;
+ #endif
+@@ -886,9 +886,9 @@
+ static void Op49M0(void)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   ICPU.Registers.A.W ^= *(uint16_t*) CPU.PC;
++   ICPU.Registers.A.W ^= S9xPCReadWord(0);
+ #else
+-   ICPU.Registers.A.W ^= *CPU.PC + (*(CPU.PC + 1) << 8);
++   ICPU.Registers.A.W ^= S9xPCRead(0) + (S9xPCRead(1) << 8);
+ #endif
+    CPU.PC += 2;
+ #ifndef SA1_OPCODES
+@@ -1127,7 +1127,7 @@
+ /* LDA */
+ static void OpA9M1(void)
+ {
+-   ICPU.Registers.AL = *CPU.PC++;
++   ICPU.Registers.AL = S9xPCReadNext();
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed;
+ #endif
+@@ -1137,9 +1137,9 @@
+ static void OpA9M0(void)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   ICPU.Registers.A.W = *(uint16_t*) CPU.PC;
++   ICPU.Registers.A.W = S9xPCReadWord(0);
+ #else
+-   ICPU.Registers.A.W = *CPU.PC + (*(CPU.PC + 1) << 8);
++   ICPU.Registers.A.W = S9xPCRead(0) + (S9xPCRead(1) << 8);
+ #endif
+ 
+    CPU.PC += 2;
+@@ -1320,7 +1320,7 @@
+ /* LDX */
+ static void OpA2X1(void)
+ {
+-   ICPU.Registers.XL = *CPU.PC++;
++   ICPU.Registers.XL = S9xPCReadNext();
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed;
+ #endif
+@@ -1330,9 +1330,9 @@
+ static void OpA2X0(void)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   ICPU.Registers.X.W = *(uint16_t*) CPU.PC;
++   ICPU.Registers.X.W = S9xPCReadWord(0);
+ #else
+-   ICPU.Registers.X.W = *CPU.PC + (*(CPU.PC + 1) << 8);
++   ICPU.Registers.X.W = S9xPCRead(0) + (S9xPCRead(1) << 8);
+ #endif
+    CPU.PC += 2;
+ #ifndef SA1_OPCODES
+@@ -1392,7 +1392,7 @@
+ /* LDY */
+ static void OpA0X1(void)
+ {
+-   ICPU.Registers.YL = *CPU.PC++;
++   ICPU.Registers.YL = S9xPCReadNext();
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed;
+ #endif
+@@ -1402,9 +1402,9 @@
+ static void OpA0X0(void)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   ICPU.Registers.Y.W = *(uint16_t*) CPU.PC;
++   ICPU.Registers.Y.W = S9xPCReadWord(0);
+ #else
+-   ICPU.Registers.Y.W = *CPU.PC + (*(CPU.PC + 1) << 8);
++   ICPU.Registers.Y.W = S9xPCRead(0) + (S9xPCRead(1) << 8);
+ #endif
+ 
+    CPU.PC += 2;
+@@ -1524,7 +1524,7 @@
+ /* ORA */
+ static void Op09M1(void)
+ {
+-   ICPU.Registers.AL |= *CPU.PC++;
++   ICPU.Registers.AL |= S9xPCReadNext();
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeed;
+ #endif
+@@ -1534,9 +1534,9 @@
+ static void Op09M0(void)
+ {
+ #ifdef FAST_LSB_WORD_ACCESS
+-   ICPU.Registers.A.W |= *(uint16_t*) CPU.PC;
++   ICPU.Registers.A.W |= S9xPCReadWord(0);
+ #else
+-   ICPU.Registers.A.W |= *CPU.PC + (*(CPU.PC + 1) << 8);
++   ICPU.Registers.A.W |= S9xPCRead(0) + (S9xPCRead(1) << 8);
+ #endif
+    CPU.PC += 2;
+ #ifndef SA1_OPCODES
+@@ -1841,7 +1841,7 @@
+ static void OpE9M0(void)
+ {
+    Immediate16();
+-   SBC16();
++   SBC16Value(S9xPCImmediateWord(OpAddress));
+ }
+ 
+ static void OpE5M1(void)
+@@ -3621,9 +3621,9 @@
+    CPU.Cycles += CPU.MemSpeedx2 + TWO_CYCLES;
+ #endif
+ 
+-   ICPU.Registers.DB = *CPU.PC++;
++   ICPU.Registers.DB = S9xPCReadNext();
+    ICPU.ShiftedDB = ICPU.Registers.DB << 16;
+-   OpenBus = *CPU.PC++;
++   OpenBus = S9xPCReadNext();
+ 
+    S9xSetByte(S9xGetByte((OpenBus << 16) + ICPU.Registers.X.W), ICPU.ShiftedDB + ICPU.Registers.Y.W);
+ 
+@@ -3640,9 +3640,9 @@
+    CPU.Cycles += CPU.MemSpeedx2 + TWO_CYCLES;
+ #endif
+ 
+-   ICPU.Registers.DB = *CPU.PC++;
++   ICPU.Registers.DB = S9xPCReadNext();
+    ICPU.ShiftedDB = ICPU.Registers.DB << 16;
+-   OpenBus = *CPU.PC++;
++   OpenBus = S9xPCReadNext();
+ 
+    S9xSetByte(S9xGetByte((OpenBus << 16) + ICPU.Registers.X.W), ICPU.ShiftedDB + ICPU.Registers.Y.W);
+ 
+@@ -3658,9 +3658,9 @@
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeedx2 + TWO_CYCLES;
+ #endif
+-   ICPU.Registers.DB = *CPU.PC++;
++   ICPU.Registers.DB = S9xPCReadNext();
+    ICPU.ShiftedDB = ICPU.Registers.DB << 16;
+-   OpenBus = *CPU.PC++;
++   OpenBus = S9xPCReadNext();
+    S9xSetByte(S9xGetByte((OpenBus << 16) + ICPU.Registers.X.W), ICPU.ShiftedDB + ICPU.Registers.Y.W);
+ 
+    ICPU.Registers.XL--;
+@@ -3675,9 +3675,9 @@
+ #ifndef SA1_OPCODES
+    CPU.Cycles += CPU.MemSpeedx2 + TWO_CYCLES;
+ #endif
+-   ICPU.Registers.DB = *CPU.PC++;
++   ICPU.Registers.DB = S9xPCReadNext();
+    ICPU.ShiftedDB = ICPU.Registers.DB << 16;
+-   OpenBus = *CPU.PC++;
++   OpenBus = S9xPCReadNext();
+    S9xSetByte(S9xGetByte((OpenBus << 16) + ICPU.Registers.X.W), ICPU.ShiftedDB + ICPU.Registers.Y.W);
+ 
+    ICPU.Registers.X.W--;
+@@ -3690,7 +3690,7 @@
+ /* REP/SEP */
+ static void OpC2(void)
+ {
+-   uint8_t Work8 = ~*CPU.PC++;
++   uint8_t Work8 = ~S9xPCReadNext();
+    ICPU.Registers.PL &= Work8;
+    ICPU._Carry &= Work8;
+    ICPU._Overflow &= (Work8 >> 6);
+@@ -3712,7 +3712,7 @@
+ 
+ static void OpE2(void)
+ {
+-   uint8_t Work8 = *CPU.PC++;
++   uint8_t Work8 = S9xPCReadNext();
+    ICPU.Registers.PL |= Work8;
+    ICPU._Carry |= Work8 & 1;
+    ICPU._Overflow |= (Work8 >> 6) & 1;
+@@ -3802,7 +3802,7 @@
+ {
+ #ifndef NO_SPEEDHACKS
+    int8_t BranchOffset;
+-   uint8_t NextByte = *CPU.PC++;
++   uint8_t NextByte = S9xPCReadNext();
+ 
+    ForceShutdown();
+ 
+@@ -3846,7 +3846,7 @@
+ {
+ #ifndef NO_SPEEDHACKS
+    int8_t BranchOffset;
+-   uint8_t NextByte = *CPU.PC++;
++   uint8_t NextByte = S9xPCReadNext();
+ 
+    ForceShutdown();
+ 
+--- a/source/cpuexec.c
++++ b/source/cpuexec.c
+@@ -11,6 +11,7 @@
+ #include "fxemu.h"
+ #include "sa1.h"
+ #include "spc7110.h"
++#include "cpufetch.h"
+ 
+ void S9xMainLoop_SA1_SFX(void);
+ void S9xMainLoop_SA1_NoSFX(void);
+@@ -93,9 +94,10 @@
+                break;
+          }
+ 
++         S9xPCPrepare();
+          CPU.PCAtOpcodeStart = CPU.PC;
+          CPU.Cycles += CPU.MemSpeed;
+-         (*ICPU.S9xOpcodes [*CPU.PC++].S9xOpcode)();
++         (*ICPU.S9xOpcodes [S9xPCReadNext()].S9xOpcode)();
+ 
+          if (SA1.Executing)
+             S9xSA1MainLoop();
+@@ -181,9 +183,10 @@
+                break;
+          }
+ 
++         S9xPCPrepare();
+          CPU.PCAtOpcodeStart = CPU.PC;
+          CPU.Cycles += CPU.MemSpeed;
+-         (*ICPU.S9xOpcodes [*CPU.PC++].S9xOpcode)();
++         (*ICPU.S9xOpcodes [S9xPCReadNext()].S9xOpcode)();
+ 
+          if (SA1.Executing)
+             S9xSA1MainLoop();
+@@ -269,9 +272,10 @@
+                break;
+          }
+ 
++         S9xPCPrepare();
+          CPU.PCAtOpcodeStart = CPU.PC;
+          CPU.Cycles += CPU.MemSpeed;
+-         (*ICPU.S9xOpcodes [*CPU.PC++].S9xOpcode)();
++         (*ICPU.S9xOpcodes [S9xPCReadNext()].S9xOpcode)();
+          DO_HBLANK_CHECK_SFX();
+ 
+ #ifdef LAGFIX
+@@ -354,9 +358,10 @@
+                break;
+          }
+ 
++         S9xPCPrepare();
+          CPU.PCAtOpcodeStart = CPU.PC;
+          CPU.Cycles += CPU.MemSpeed;
+-         (*ICPU.S9xOpcodes [*CPU.PC++].S9xOpcode)();
++         (*ICPU.S9xOpcodes [S9xPCReadNext()].S9xOpcode)();
+          DO_HBLANK_CHECK_NoSFX();
+ 
+ #ifdef LAGFIX
+--- a/source/cpumacro.h
++++ b/source/cpumacro.h
+@@ -68,9 +68,8 @@
+    SetZN8(ICPU.Registers.AL);
+ }
+ 
+-static INLINE void ADC16(void)
+-{
+-   uint16_t Work16 = S9xGetWord(OpAddress);
++static INLINE void ADC16Value(uint16_t Work16)
++{
+    if (CheckDecimal())
+    {
+       uint16_t Ans16;
+@@ -138,6 +137,11 @@
+    SetZN16(ICPU.Registers.A.W);
+ }
+ 
++static INLINE void ADC16(void)
++{
++   ADC16Value(S9xGetWord(OpAddress));
++}
++
+ static INLINE void AND16(void)
+ {
+    ICPU.Registers.A.W &= S9xGetWord(OpAddress);
+@@ -563,9 +567,8 @@
+    SetZN8((uint8_t) Work16);
+ }
+ 
+-static INLINE void SBC16(void)
+-{
+-   uint16_t Work16 = S9xGetWord(OpAddress);
++static INLINE void SBC16Value(uint16_t Work16)
++{
+    if (CheckDecimal())
+    {
+       uint16_t Ans16;
+@@ -625,6 +628,11 @@
+    SetZN16(ICPU.Registers.A.W);
+ }
+ 
++static INLINE void SBC16(void)
++{
++   SBC16Value(S9xGetWord(OpAddress));
++}
++
+ static INLINE void SBC8(void)
+ {
+    uint8_t Work8 = S9xGetByte(OpAddress);

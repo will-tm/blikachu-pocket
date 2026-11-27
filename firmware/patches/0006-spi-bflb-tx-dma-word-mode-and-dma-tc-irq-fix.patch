@@ -1,0 +1,429 @@
+diff --git a/drivers/spi/Kconfig.bflb b/drivers/spi/Kconfig.bflb
+index cc3d147967a..ef71a9405c1 100644
+--- a/drivers/spi/Kconfig.bflb
++++ b/drivers/spi/Kconfig.bflb
+@@ -7,3 +7,11 @@ config SPI_BFLB
+ 	depends on DT_HAS_BFLB_SPI_ENABLED
+ 	help
+ 	  Enable support for Bouffalolab SPI driver.
++
++config SPI_BFLB_DMA
++	bool "Bouffalolab SPI DMA support"
++	default y
++	depends on SPI_BFLB && DMA
++	help
++	  Use DMA for large transmit-only transfers when the SPI node has
++	  a "tx" DMA channel. Falls back to polled I/O otherwise.
+--- a/drivers/spi/spi_bflb.c
++++ b/drivers/spi/spi_bflb.c
+@@ -25,6 +25,22 @@
+ #include <bouffalolab/common/spi_reg.h>
+ 
+ #include "spi_context.h"
++
++#ifdef CONFIG_SPI_BFLB_DMA
++#include <zephyr/cache.h>
++#include <zephyr/drivers/dma.h>
++/* PL08x-style 12-bit transfer counter */
++#define SPI_BFLB_DMA_MAX_XFER	4095
++/* Below this the polled path is faster than DMA setup */
++#define SPI_BFLB_DMA_MIN_LEN	64
++#if defined(CONFIG_SOC_SERIES_BL61X) && DT_NODE_EXISTS(DT_NODELABEL(wifi_ram))
++#define SPI_BFLB_DMA_BUFFER_SIZE 4096
++#define SPI_BFLB_DMA_BUFFER_ATTR __aligned(32) __attribute__((section("WIFI_RAM")))
++#else
++#define SPI_BFLB_DMA_BUFFER_SIZE 8192
++#define SPI_BFLB_DMA_BUFFER_ATTR __aligned(32)
++#endif
++#endif
+ 
+ #if defined(CONFIG_SOC_SERIES_BL60X) || defined(CONFIG_SOC_SERIES_BL70X) || \
+ 	defined(CONFIG_SOC_SERIES_BL70XL)
+@@ -59,10 +75,20 @@
+ 	const struct pinctrl_dev_config *pincfg;
+ 	uint32_t base;
+ 	void (*irq_config_func)(const struct device *dev);
++#ifdef CONFIG_SPI_BFLB_DMA
++	const struct device *dma_dev;
++	uint8_t dma_channel;
++	uint8_t dma_slot;
++#endif
+ };
+ 
+ struct spi_bflb_data {
+ 	struct spi_context ctx;
++#ifdef CONFIG_SPI_BFLB_DMA
++	struct k_sem dma_done;
++	volatile int dma_status;
++	uint8_t *dma_buf;
++#endif
+ };
+ 
+ #if defined(CONFIG_SOC_SERIES_BL70X) || defined(CONFIG_SOC_SERIES_BL60X) || \
+@@ -151,7 +177,7 @@
+ #error Unsupported platform
+ #endif
+ 
+-static bool spi_bflb_bus_busy(const struct device *dev)
++static __ramfunc bool spi_bflb_bus_busy(const struct device *dev)
+ {
+ 	uint32_t tmp;
+ 	const struct spi_bflb_cfg *config = dev->config;
+@@ -160,7 +186,7 @@
+ 	return (tmp & SPI_STS_SPI_BUS_BUSY) == 0 ? false : true;
+ }
+ 
+-static int spi_bflb_trigger_controller(const struct device *dev)
++static __ramfunc int spi_bflb_trigger_controller(const struct device *dev)
+ {
+ 	uint32_t tmp;
+ 	const struct spi_bflb_cfg *config = dev->config;
+@@ -180,7 +206,7 @@
+ 	return 0;
+ }
+ 
+-static int spi_bflb_detrigger_controller(const struct device *dev)
++static __ramfunc int spi_bflb_detrigger_controller(const struct device *dev)
+ {
+ 	uint32_t tmp;
+ 	const struct spi_bflb_cfg *config = dev->config;
+@@ -334,7 +360,7 @@
+ 	return 0;
+ }
+ 
+-static int spi_bflb_configure(const struct device *dev, const struct spi_config *config)
++static __ramfunc int spi_bflb_configure(const struct device *dev, const struct spi_config *config)
+ {
+ 	int rc;
+ 	const struct spi_bflb_cfg *cfg = dev->config;
+@@ -343,6 +369,14 @@
+ 	uint32_t framesize;
+ 	k_timepoint_t end_timeout =
+ 		sys_timepoint_calc(K_MSEC(SPI_WAIT_TIMEOUT_MS));
++
++	/* Same owner + settings as the last transceive: the controller
++	 * is already set up — skip the full clock/format reprogram
++	 * (it costs a good chunk of every small command write).
++	 */
++	if (spi_context_configured(&data->ctx, config)) {
++		return 0;
++	}
+ 
+ 	while (spi_bflb_bus_busy(dev) && !sys_timepoint_expired(end_timeout)) {
+ 	}
+@@ -474,7 +508,238 @@
+ 	return 0;
+ }
+ 
+-static int spi_bflb_transceive_sync(const struct device *dev,
++#ifdef CONFIG_SPI_BFLB_DMA
++#if defined(CONFIG_SOC_SERIES_BL61X)
++/* A bounded diagnostic distinguishes DMA hardware progress from interrupt
++ * delivery. Only the idle-game LCD benchmark enables sampling/tuning. */
++static struct {
++	bool active;
++	uint8_t burst;
++	uint32_t late, pending, pending_max, dma_us_max, wake_us_max;
++	volatile uint32_t irq_cycle;
++	uint32_t start_cycle;
++} spi_dma_probe;
++
++void spi_bflb_dma_probe_begin(unsigned burst)
++{
++	memset(&spi_dma_probe, 0, sizeof(spi_dma_probe));
++	spi_dma_probe.burst = burst == 1 ? 1 : 4;
++	spi_dma_probe.active = true;
++}
++
++void spi_bflb_dma_probe_end(uint32_t out[5])
++{
++	spi_dma_probe.active = false;
++	out[0] = spi_dma_probe.late;
++	out[1] = spi_dma_probe.pending;
++	out[2] = spi_dma_probe.pending_max;
++	out[3] = spi_dma_probe.dma_us_max;
++	out[4] = spi_dma_probe.wake_us_max;
++}
++#endif
++
++/* Completion wakes the SPI thread; the next SRAM buffer is prepared
++ * while the engine is reading the current one.
++ */
++static __ramfunc void spi_bflb_dma_cb(const struct device *dma_dev, void *user_data,
++				     uint32_t channel, int status)
++{
++	const struct device *dev = user_data;
++	struct spi_bflb_data *data = dev->data;
++
++	ARG_UNUSED(dma_dev);
++	ARG_UNUSED(channel);
++	data->dma_status = status;
++#if defined(CONFIG_SOC_SERIES_BL61X)
++	if (spi_dma_probe.active) spi_dma_probe.irq_cycle = k_cycle_get_32();
++#endif
++	k_sem_give(&data->dma_done);
++}
++
++/* TX-only ping-pong staging. Peripheral DMA reads internal SRAM, not
++ * the application's cached PSRAM. Keep SPI configured across all chunks
++ * and drain once at the end, instead of introducing a gap at each chunk.
++ */
++static __ramfunc int spi_bflb_tx_dma(const struct device *dev, const uint8_t *buf, size_t len)
++{
++	const struct spi_bflb_cfg *cfg = dev->config;
++	struct spi_bflb_data *data = dev->data;
++	struct dma_block_config block = {0};
++	struct dma_config dcfg = {0};
++	const size_t stride = SPI_BFLB_DMA_BUFFER_SIZE / 2;
++	bool direct = false;
++#if defined(CONFIG_SOC_SERIES_BL61X) && DT_NODE_EXISTS(DT_NODELABEL(wifi_ram))
++	uintptr_t address = (uintptr_t)buf;
++	uintptr_t base = DT_REG_ADDR(DT_NODELABEL(wifi_ram));
++	uintptr_t end = base + DT_REG_SIZE(DT_NODELABEL(wifi_ram));
++
++	direct = address >= base && address < end && len <= end - address;
++#endif
++	bool word_mode = (len % 4) == 0 && (!direct || ((uintptr_t)buf % 4) == 0);
++	size_t width = word_mode ? 4 : 1;
++	unsigned burst = 4;
++	unsigned threshold = SPI_FIFO_SIZE / 2;
++#if defined(CONFIG_SOC_SERIES_BL61X)
++	bool probe = spi_dma_probe.active && direct && word_mode;
++	if (probe) {
++		burst = spi_dma_probe.burst;
++		threshold = burst * width;
++	}
++#endif
++	size_t max_chunk = ROUND_DOWN(SPI_BFLB_DMA_MAX_XFER * width, 32);
++	size_t capacity = direct ? max_chunk : MIN(stride, max_chunk);
++	size_t chunk = MIN(len, capacity);
++	size_t remaining = len - chunk;
++	const uint8_t *next_src = buf + chunk;
++	unsigned int current = 0;
++	uint32_t saved = sys_read32(cfg->base + SPI_CONFIG_OFFSET);
++	uint32_t tmp;
++	int rc;
++
++	if (!direct) {
++		memcpy(data->dma_buf, buf, chunk);
++	}
++	k_sem_reset(&data->dma_done);
++	data->dma_status = 0;
++
++	tmp = sys_read32(cfg->base + SPI_FIFO_CONFIG_1_OFFSET);
++	tmp &= ~SPI_TX_FIFO_TH_MASK;
++	tmp |= threshold << SPI_TX_FIFO_TH_SHIFT;
++	sys_write32(tmp, cfg->base + SPI_FIFO_CONFIG_1_OFFSET);
++	tmp = sys_read32(cfg->base + SPI_FIFO_CONFIG_0_OFFSET);
++	sys_write32(tmp | SPI_DMA_TX_EN, cfg->base + SPI_FIFO_CONFIG_0_OFFSET);
++	tmp = saved | SPI_CR_SPI_M_CONT_EN;
++	if (word_mode) {
++		tmp &= ~SPI_CR_SPI_FRAME_SIZE_MASK;
++		tmp |= 3U << SPI_CR_SPI_FRAME_SIZE_SHIFT;
++		tmp &= ~SPI_CR_SPI_BYTE_INV;
++	}
++	sys_write32(tmp, cfg->base + SPI_CONFIG_OFFSET);
++
++	dcfg.channel_direction = MEMORY_TO_PERIPHERAL;
++	dcfg.dma_slot = cfg->dma_slot;
++	dcfg.source_data_size = width;
++	dcfg.dest_data_size = width;
++	dcfg.source_burst_length = burst;
++	dcfg.dest_burst_length = burst;
++	dcfg.block_count = 1;
++	dcfg.head_block = &block;
++	dcfg.dma_callback = spi_bflb_dma_cb;
++	dcfg.user_data = (void *)dev;
++	block.source_address = (uint32_t)(uintptr_t)(direct ? buf : data->dma_buf);
++	block.dest_address = cfg->base + SPI_FIFO_WDATA_OFFSET;
++	block.block_size = chunk;
++	block.source_addr_adj = DMA_ADDR_ADJ_INCREMENT;
++	block.dest_addr_adj = DMA_ADDR_ADJ_NO_CHANGE;
++
++	(void)dma_stop(cfg->dma_dev, cfg->dma_channel);
++	rc = dma_config(cfg->dma_dev, cfg->dma_channel, &dcfg);
++	if (rc == 0) {
++#if defined(CONFIG_SOC_SERIES_BL61X)
++		if (probe) {
++			spi_dma_probe.start_cycle = k_cycle_get_32();
++			spi_dma_probe.irq_cycle = 0;
++		}
++#endif
++		rc = dma_start(cfg->dma_dev, cfg->dma_channel);
++	}
++	while (rc == 0) {
++		unsigned int next = current ^ 1U;
++		size_t next_chunk = MIN(remaining, capacity);
++		uint8_t *next_buf = direct ? (uint8_t *)next_src : &data->dma_buf[next * stride];
++
++		if (next_chunk != 0 && !direct) {
++			memcpy(next_buf, next_src, next_chunk);
++		}
++		int wait_rc;
++#if defined(CONFIG_SOC_SERIES_BL61X)
++		if (probe) {
++			wait_rc = k_sem_take(&data->dma_done, K_USEC(2000));
++			if (wait_rc) {
++				struct dma_status progress = {0};
++				(void)dma_get_status(cfg->dma_dev, cfg->dma_channel, &progress);
++				spi_dma_probe.late++;
++				if (progress.pending_length) spi_dma_probe.pending++;
++				spi_dma_probe.pending_max = MAX(spi_dma_probe.pending_max,
++							      progress.pending_length);
++				wait_rc = k_sem_take(&data->dma_done, K_MSEC(SPI_WAIT_TIMEOUT_MS - 2));
++			}
++			if (!wait_rc && spi_dma_probe.irq_cycle) {
++				uint32_t done = k_cycle_get_32();
++				uint32_t dma_us = k_cyc_to_us_floor32(spi_dma_probe.irq_cycle -
++								spi_dma_probe.start_cycle);
++				uint32_t wake_us = k_cyc_to_us_floor32(done - spi_dma_probe.irq_cycle);
++				spi_dma_probe.dma_us_max = MAX(spi_dma_probe.dma_us_max, dma_us);
++				spi_dma_probe.wake_us_max = MAX(spi_dma_probe.wake_us_max, wake_us);
++			}
++		} else
++#endif
++		{
++			wait_rc = k_sem_take(&data->dma_done, K_MSEC(SPI_WAIT_TIMEOUT_MS));
++		}
++		if (wait_rc) {
++			rc = -ETIMEDOUT;
++			break;
++		}
++		rc = data->dma_status;
++		if (rc != 0 || next_chunk == 0) {
++			break;
++		}
++		(void)dma_stop(cfg->dma_dev, cfg->dma_channel);
++		rc = dma_reload(cfg->dma_dev, cfg->dma_channel,
++				(uint32_t)(uintptr_t)next_buf, block.dest_address, next_chunk);
++		if (rc != 0) {
++			break;
++		}
++		current = next;
++		next_src += next_chunk;
++		remaining -= next_chunk;
++		data->dma_status = 0;
++		/* dma_start() writes back the new source buffer on BL61x. */
++		rc = dma_start(cfg->dma_dev, cfg->dma_channel);
++	}
++	(void)dma_stop(cfg->dma_dev, cfg->dma_channel);
++	if (rc == 0) {
++		int64_t deadline = k_uptime_get() + SPI_WAIT_TIMEOUT_MS;
++
++		do {
++			tmp = sys_read32(cfg->base + SPI_FIFO_CONFIG_1_OFFSET);
++			tmp = (tmp & SPI_TX_FIFO_CNT_MASK) >> SPI_TX_FIFO_CNT_SHIFT;
++		} while ((tmp != SPI_FIFO_SIZE || spi_bflb_bus_busy(dev)) &&
++			 k_uptime_get() < deadline);
++		if (tmp != SPI_FIFO_SIZE || spi_bflb_bus_busy(dev)) {
++			rc = -ETIMEDOUT;
++		}
++	}
++	tmp = sys_read32(cfg->base + SPI_FIFO_CONFIG_0_OFFSET);
++	sys_write32(tmp & ~SPI_DMA_TX_EN, cfg->base + SPI_FIFO_CONFIG_0_OFFSET);
++	sys_write32(saved, cfg->base + SPI_CONFIG_OFFSET);
++	return rc;
++}
++
++static bool spi_bflb_dma_usable(const struct device *dev,
++				const struct spi_buf_set *tx_bufs,
++				const struct spi_buf_set *rx_bufs,
++				uint8_t frame_size)
++{
++	const struct spi_bflb_cfg *cfg = dev->config;
++
++	if (cfg->dma_dev == NULL || !device_is_ready(cfg->dma_dev)) {
++		return false;
++	}
++	if (rx_bufs != NULL || tx_bufs == NULL || tx_bufs->count == 0 || frame_size != 1) {
++		return false;
++	}
++	for (size_t i = 0; i < tx_bufs->count; i++) {
++		if (tx_bufs->buffers[i].buf == NULL) {
++			return false;
++		}
++	}
++	return tx_bufs->buffers[0].len >= SPI_BFLB_DMA_MIN_LEN;
++}
++#endif /* CONFIG_SPI_BFLB_DMA */
++
++static __ramfunc int spi_bflb_transceive_sync(const struct device *dev,
+ 					const struct spi_config *config,
+ 					const struct spi_buf_set *tx_bufs,
+ 					const struct spi_buf_set *rx_bufs)
+@@ -516,6 +781,23 @@
+ 		goto out;
+ 	}
+ 
++#ifdef CONFIG_SPI_BFLB_DMA
++	if (spi_bflb_dma_usable(dev, tx_bufs, rx_bufs, frame_size)) {
++		for (size_t i = 0; i < tx_bufs->count && rc == 0; i++) {
++			rc = spi_bflb_tx_dma(dev, tx_bufs->buffers[i].buf,
++					     tx_bufs->buffers[i].len);
++		}
++		if (rc != 0) {
++			goto out;
++		}
++		spi_context_buffers_setup(ctx, NULL, NULL, frame_size);
++		rc = spi_bflb_detrigger_controller(dev);
++		spi_context_cs_control(ctx, false);
++		spi_context_release(&data->ctx, rc);
++		return rc;
++	}
++#endif
++
+ 	while (spi_context_tx_on(ctx) || spi_context_rx_on(ctx)) {
+ 		tmp = sys_read32(cfg->base + SPI_FIFO_CONFIG_1_OFFSET);
+ 		tx_available = (tmp & SPI_TX_FIFO_CNT_MASK)
+@@ -575,6 +857,10 @@
+ 	if (rc < 0) {
+ 		return rc;
+ 	}
++
++#ifdef CONFIG_SPI_BFLB_DMA
++	k_sem_init(&data->dma_done, 0, 1);
++#endif
+ 
+ 	tmp = sys_read32(cfg->base + SPI_INT_STS_OFFSET);
+ 
+@@ -700,10 +986,32 @@
+ 		irq_enable(DT_INST_IRQN(n));				\
+ 	}
+ 
++#ifdef CONFIG_SPI_BFLB_DMA
++#define SPI_BFLB_DMA_BUFFER(n) \
++	COND_CODE_1(DT_INST_DMAS_HAS_NAME(n, tx), \
++		(static uint8_t spi##n##_dma_buffer[SPI_BFLB_DMA_BUFFER_SIZE] \
++		 SPI_BFLB_DMA_BUFFER_ATTR;), ())
++#define SPI_BFLB_DMA_DATA_INIT(n) \
++	COND_CODE_1(DT_INST_DMAS_HAS_NAME(n, tx), \
++		(.dma_buf = spi##n##_dma_buffer,), ())
++#define SPI_BFLB_DMA_INIT(n)                                                                       \
++	COND_CODE_1(DT_INST_DMAS_HAS_NAME(n, tx),                                                  \
++		(.dma_dev = DEVICE_DT_GET(DT_INST_DMAS_CTLR_BY_NAME(n, tx)),                       \
++		 .dma_channel = DT_INST_DMAS_CELL_BY_NAME(n, tx, channel),                         \
++		 .dma_slot = DT_INST_DMAS_CELL_BY_NAME(n, tx, trigsrc),),                          \
++		(.dma_dev = NULL,))
++#else
++#define SPI_BFLB_DMA_INIT(n)
++#define SPI_BFLB_DMA_BUFFER(n)
++#define SPI_BFLB_DMA_DATA_INIT(n)
++#endif
++
+ #define SPI_BFLB_INIT(n)                                                                           \
++	SPI_BFLB_DMA_BUFFER(n)                                                               \
+ 	PINCTRL_DT_INST_DEFINE(n);                                                                 \
+ 	SPI_BFLB_IRQ_HANDLER_DECL(n)                                                               \
+ 	static struct spi_bflb_data spi##n##_bflb_data = {                                         \
++		SPI_BFLB_DMA_DATA_INIT(n)                                                        \
+ 		SPI_CONTEXT_INIT_LOCK(spi##n##_bflb_data, ctx),                                    \
+ 		SPI_CONTEXT_INIT_SYNC(spi##n##_bflb_data, ctx),                                    \
+ 		SPI_CONTEXT_CS_GPIOS_INITIALIZE(DT_DRV_INST(n), ctx)                               \
+@@ -711,6 +1019,7 @@
+ 	static const struct spi_bflb_cfg spi_bflb_cfg_##n = {                                      \
+ 		.pincfg = PINCTRL_DT_INST_DEV_CONFIG_GET(n),                                       \
+ 		.base = DT_INST_REG_ADDR(n),                                                       \
++		SPI_BFLB_DMA_INIT(n)                                                               \
+ 		SPI_BFLB_IRQ_HANDLER_FUNC(n)                                                       \
+ 	};                                                                                         \
+ 	DEVICE_DT_INST_DEINIT_DEFINE(n,                                                            \

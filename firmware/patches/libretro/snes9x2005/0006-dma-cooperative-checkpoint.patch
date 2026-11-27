@@ -1,0 +1,33 @@
+--- a/source/cpuexec.c
++++ b/source/cpuexec.c
+@@ -1,3 +1,8 @@
++#ifdef BLIKACHU_DMA_CHECKPOINT
++extern unsigned int lr_dma_checkpoint_requested;
++void lr_dma_checkpoint(void);
++#endif
++
+ #include "../copyright"
+ 
+ #include "snes9x.h"
+@@ -446,6 +451,10 @@
+       S9xAPUSetReferenceTime(CPU.Cycles);
+ #endif
+       CPU.NextEvent = -1;
++#ifdef BLIKACHU_DMA_CHECKPOINT
++      if (!(CPU.V_Counter & 3) && __atomic_load_n(&lr_dma_checkpoint_requested, __ATOMIC_RELAXED))
++         lr_dma_checkpoint();
++#endif
+ 
+       if (++CPU.V_Counter >= (Settings.PAL ? SNES_MAX_PAL_VCOUNTER : SNES_MAX_NTSC_VCOUNTER))
+       {
+@@ -576,6 +585,10 @@
+       S9xAPUSetReferenceTime(CPU.Cycles);
+ #endif
+       CPU.NextEvent = -1;
++#ifdef BLIKACHU_DMA_CHECKPOINT
++      if (!(CPU.V_Counter & 3) && __atomic_load_n(&lr_dma_checkpoint_requested, __ATOMIC_RELAXED))
++         lr_dma_checkpoint();
++#endif
+ 
+       if (++CPU.V_Counter >= (Settings.PAL ? SNES_MAX_PAL_VCOUNTER : SNES_MAX_NTSC_VCOUNTER))
+       {

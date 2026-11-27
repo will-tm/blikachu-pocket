@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Cache
+.cache/
+
+# KiCad (hardware/)
+*-backups/
+.history/
+_autosave-*
+*.bak
+*.kicad_pcb-bak
+*.kicad_sch-bak
+*.lck
+fp-info-cache
+*.net
+
+# KiCad fabrication outputs (regenerated from sources)
+gerbers/
+fabrication/
+production/
+*.gbr
+*.drl

@@ -1,0 +1,68 @@
+--- a/src/state.c
++++ b/src/state.c
+@@ -290,9 +290,10 @@
+ {
+    int bsize;
+ 
++   bsize = SubWrite(0, sf);
++   if (!bsize)
++      return 0;
+    memstream_putc(mem, type);
+-
+-   bsize = SubWrite(0, sf);
+    write32le_mem(bsize, mem);
+ 
+    if (!SubWrite(mem, sf))
+@@ -457,6 +458,25 @@
+ 
+ extern int geniestage;
+ 
++static size_t StateChunkSize(SFORMAT *sf)
++{
++   int size = SubWrite(NULL, sf);
++   return size ? (size_t)size + 5 : 0;
++}
++
++size_t FCEUSS_Size(void)
++{
++   size_t size = 16 + StateChunkSize(SFCPU) + StateChunkSize(SFCPUC) +
++         StateChunkSize(FCEUPPU_STATEINFO) + StateChunkSize(FCEUCTRL_STATEINFO) +
++         StateChunkSize(FCEUSND_STATEINFO);
++   if (SPreSave)
++      SPreSave();
++   size += StateChunkSize(SFMDATA);
++   if (SPostSave)
++      SPostSave();
++   return size;
++}
++
+ size_t FCEUSS_Save_Mem(void *buf, size_t size)
+ {
+    memstream_t *mem = memstream_open((uint8_t*)buf, size, 1);
+--- a/src/state.h
++++ b/src/state.h
+@@ -26,6 +26,7 @@
+ #include "fceu-memory.h"
+ 
+ int FCEUSS_Load_Mem(const void *buf, size_t size);
++size_t FCEUSS_Size(void);
+ size_t FCEUSS_Save_Mem(void *buf, size_t size);
+ 
+ typedef struct {
+--- a/src/drivers/libretro/libretro.c
++++ b/src/drivers/libretro/libretro.c
+@@ -3391,13 +3391,7 @@
+ {
+    if (serialize_size == 0)
+    {
+-      /* Something arbitrarily big.*/
+-      uint8_t *buffer = (uint8_t*)malloc(1000000);
+-      if (!buffer)
+-         return 0;
+-
+-      serialize_size = FCEUSS_Save_Mem(buffer, 1000000);
+-      free(buffer);
++      serialize_size = FCEUSS_Size();
+    }
+ 
+    return serialize_size;

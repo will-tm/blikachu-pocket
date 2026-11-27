@@ -1,0 +1,4 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "blikachu-pocket-eagle-import") (type "KiCad") (uri "${KIPRJMOD}/blikachu-pocket-eagle-import.kicad_sym") (options "") (descr ""))
+)

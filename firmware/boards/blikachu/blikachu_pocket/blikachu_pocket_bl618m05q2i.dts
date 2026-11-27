@@ -1,0 +1,474 @@
+/*
+ * BLikachu Pocket v2.0 — BL618 handheld Game Boy emulator.
+ *
+ * Pin map (from hardware/ PCB netlist — pads are ground truth,
+ * the schematic is partly an Eagle import):
+ *   I2C0 (LSM6DSV16X IMU, INT1=GPIO3):
+ *     SCL=GPIO0  SDA=GPIO1
+ *   BOOT button (SW1, to +3V3 — BootROM entry, not an input key):
+ *     GPIO2
+ *   QSPI flash on SF2 pad set (external — BL618M05 has no internal
+ *   die): W25Q512JV 64 MB (U3).
+ *     CS=GPIO4 D1=GPIO5 D2=GPIO6 D0=GPIO7 CLK=GPIO8 D3=GPIO9
+ *   Battery measurement: VBAT_MES=GPIO10 (VBAT/2, ADC CH7)
+ *   Charger status (MCP73871, open-drain active-low):
+ *     STAT1=GPIO11  STAT2=GPIO12  PG=GPIO13
+ *   Magnetic buzzer (BZ1 on +3V3 via Q4 BC847, D12 flyback):
+ *     GPIO14 (PWM0 CH2P)
+ *   D-pad / buttons (active-low, internal pull-up):
+ *     UP=GPIO15  LEFT=GPIO16  DOWN=GPIO17  RIGHT=GPIO18
+ *     START=GPIO29  B=GPIO30  SELECT=GPIO31  A=GPIO32
+ *   Power latch (74LVC1G80 ~Q -> Q3 NMOS -> Q5 PMOS, VBAT->VIN):
+ *     D=GPIO19 (/PWR_ON)  CP=GPIO33 (/CLOCK_FF)
+ *     R40 (0R) ties D to ~Q: a toggle flip-flop, each CP rising edge
+ *     flips power. ~Q high = held. GPIO19 is input-only (reads ~Q).
+ *     Power button pulls Q5's gate via D8 (and reads as START via D9).
+ *   ST7789V SPI 240x240 (ZJY133T-IF05 FPC, write-only):
+ *     MOSI=GPIO23  CS=GPIO24  SCLK=GPIO25  DC(RS)=GPIO26  RST=GPIO27
+ *     TE=GPIO20  Backlight=GPIO28 (Q2 low-side, PWM0 CH0P)
+ *   UART0 console/shell (J3 header + CKLink adapter):
+ *     TX=GPIO21  RX=GPIO22  (BootROM download pins too)
+ *   USB-C: native USB HS PHY (dedicated pins, via USBLC6 ESD) —
+ *     CDC ACM shell via the bl61x UDC (patches/0003).
+ *   LED0=GPIO34
+ *
+ * GPIO numbering: gpio0 covers GPIO0-31, gpio1 covers GPIO32-34
+ * (pins 0-2).
+ *
+ * Flash layout (64 MB W25Q512JV, 4-byte addresses):
+ *   boot_header: 8 KiB (BootROM flash config + app length/SHA-256)
+ *   image-0:     8 MB minus the header
+ *   storage:     56 MB FATFS "NAND"
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+
+#include <bflb/bl618.dtsi>
+#include <bflb/bl61x_em_32kb_wifi.dtsi>
+
+#include <freq.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/display/panel.h>
+#include <zephyr/dt-bindings/mipi_dbi/mipi_dbi.h>
+#include <zephyr/dt-bindings/pwm/pwm.h>
+
+/ {
+	model = "BLikachu Pocket v2.0";
+	compatible = "bflb,bl618";
+
+	chosen {
+		zephyr,flash = &w25q512jv;
+		zephyr,flash-controller = &sf_bank1;
+		zephyr,code-partition = &code_partition;
+		zephyr,sram = &all_ram;
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &cdc_acm_uart0;
+		zephyr,entropy = &sec_eng_trng;
+		zephyr,display = &st7789;
+	};
+
+	aliases {
+		buzzer = &pwm_buzzer;
+		watchdog0 = &wdt0;
+		vbat-adc = &adc0;
+		led0 = &led_0;
+	};
+
+	zephyr,user {
+		/* ST7789V tear-effect output. */
+		te-gpios = <&gpio0 20 GPIO_ACTIVE_HIGH>;
+		/* Backlight moved off PWM0 (single global period shared
+		 * with the buzzer — every note retuned it): timer0
+		 * soft-PWM drives the pin as plain GPIO instead.
+		 */
+		backlight-gpios = <&gpio0 28 GPIO_ACTIVE_HIGH>;
+
+		/* MCP73871 status outputs (open-drain, LED-loaded — internal
+		 * pull-ups required for a solid released level).
+		 */
+		chg-stat1-gpios = <&gpio0 11 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+		chg-stat2-gpios = <&gpio0 12 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+		chg-pg-gpios = <&gpio0 13 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+
+		/* 74LVC1G80 power latch, D tied to ~Q (R40): GPIO19 reads
+		 * the state (high = held), a CP rising edge toggles it.
+		 */
+		pwr-d-gpios = <&gpio0 19 GPIO_ACTIVE_HIGH>;
+		pwr-clk-gpios = <&gpio1 1 GPIO_ACTIVE_HIGH>;	/* GPIO33 */
+	};
+
+	nand_disk: nand_disk {
+		compatible = "zephyr,flash-disk";
+		partition = <&storage_partition>;
+		disk-name = "NAND";
+		cache-size = <4096>;
+	};
+
+	keys: gpio_keys {
+		compatible = "gpio-keys";
+		polling-mode;
+
+		key_up: key_up {
+			gpios = <&gpio0 15 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			zephyr,code = <INPUT_KEY_UP>;
+		};
+		key_down: key_down {
+			gpios = <&gpio0 17 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			zephyr,code = <INPUT_KEY_DOWN>;
+		};
+		key_left: key_left {
+			gpios = <&gpio0 16 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			zephyr,code = <INPUT_KEY_LEFT>;
+		};
+		key_right: key_right {
+			gpios = <&gpio0 18 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			zephyr,code = <INPUT_KEY_RIGHT>;
+		};
+		key_a: key_a {
+			gpios = <&gpio1 0 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;	/* GPIO32 */
+			zephyr,code = <INPUT_BTN_A>;
+		};
+		key_b: key_b {
+			gpios = <&gpio0 30 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			zephyr,code = <INPUT_BTN_B>;
+		};
+		key_start: key_start {
+			gpios = <&gpio0 29 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			zephyr,code = <INPUT_BTN_START>;
+		};
+		key_select: key_select {
+			gpios = <&gpio0 31 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			zephyr,code = <INPUT_BTN_SELECT>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		led_0: led_0 {
+			gpios = <&gpio1 2 GPIO_ACTIVE_LOW>;	/* GPIO34 */
+			label = "LED0";
+		};
+	};
+
+	mipi_dbi {
+		compatible = "zephyr,mipi-dbi-spi";
+		spi-dev = <&spi0>;
+		dc-gpios = <&gpio0 26 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpio0 27 GPIO_ACTIVE_LOW>;
+		write-only;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		st7789: st7789v@0 {
+			compatible = "sitronix,st7789v";
+			mipi-max-frequency = <DT_FREQ_M(80)>;
+			reg = <0>;
+			width = <240>;
+			height = <240>;
+			x-offset = <0>;
+			y-offset = <0>;
+			vcom = <0x37>;
+			gctrl = <0x35>;
+			vrhs = <0x12>;
+			vdvs = <0x20>;
+			mdac = <0x00>;
+			gamma = <0x01>;
+			pixel-format = <PANEL_PIXEL_FORMAT_RGB_565>;
+			lcm = <0x2c>;
+			porch-param = [0c 0c 00 33 33];
+			cmd2en-param = [5a 69 02 01];
+			pwctrl1-param = [a4 a1];
+			pvgam-param = [d0 04 0d 11 13 2b 3f 54 4c 18 0d 0b 1f 23];
+			nvgam-param = [d0 04 0c 11 13 2c 3f 44 51 2f 1f 1f 20 23];
+			ram-param = [00 f0];
+			rgb-param = [cd 08 14];
+			mipi-mode = "MIPI_DBI_MODE_SPI_4WIRE";
+		};
+	};
+
+	pwmleds {
+		compatible = "pwm-leds";
+		pwm_buzzer: pwm_buzzer {
+			pwms = <&pwm0 2 0 PWM_POLARITY_NORMAL>;	/* GPIO14 CH2P */
+		};
+	};
+};
+
+/* CPU boost on AU PLL; keep BCLK, WiFi PLL, flash and PSRAM at
+ * their normal peripheral rates. */
+&clk_aupll {
+	top-frequency = <BL61X_TOP_FREQ_OC1>;
+};
+
+&clk_bclk {
+	divider = <6>;
+};
+
+&cpu0 {
+	clock-frequency = <DT_FREQ_M(480)>;
+};
+
+/* With Bluetooth disabled, EM_SEL=0 exposes the upper 32 KiB of WRAM.
+ * The lower 128 KiB stays reserved for WiFi and DMA data. Use the cached
+ * alias of the upper slice for emulator code, with no physical overlap.
+ */
+/ {
+	core_ram: memory@a8080000 {
+		compatible = "zephyr,memory-region";
+		reg = <0xa8080000 DT_SIZE_K(3584)>;
+		zephyr,memory-region = "CORE_RAM";
+		zephyr,memory-region-flags = "rw";
+	};
+
+	emu_code: memory@63030000 {
+		compatible = "zephyr,memory-region";
+		reg = <0x63030000 DT_SIZE_K(32)>;
+		zephyr,memory-region = "EMURAM";
+		zephyr,memory-region-flags = "rx";
+	};
+};
+
+/* Firmware/network buffers are separate from the mutually exclusive core
+ * and firmware-update workspace in the upper 3.5 MiB of physical PSRAM.
+ */
+&psram {
+	reg = <0xa8000000 DT_SIZE_K(512)>;
+	ranges = <0x0 0xa8000000 DT_SIZE_K(512)>;
+};
+
+/* Backlight soft-PWM tick source (see platform_bl618.c). */
+&timer {
+	status = "okay";
+};
+
+&timer0 {
+	status = "okay";
+};
+
+&pinctrl {
+	uart0_default: uart0_default {
+		group1 {
+			pinmux = <GPIO22_UART0_RX>,
+				 <GPIO21_UART0_TX>;
+			bias-pull-up;
+			input-schmitt-enable;
+		};
+	};
+
+	uart0_sleep: uart0_sleep {
+		group1 {
+			pinmux = <GPIO22_UART0_RX>,
+				 <GPIO21_UART0_TX>;
+			bias-high-impedance;
+		};
+	};
+
+	i2c0_default: i2c0_default {
+		group1 {
+			pinmux = <GPIO0_I2C0_SCL>,
+				 <GPIO1_I2C0_SDA>;
+			bias-pull-up;
+			input-schmitt-enable;
+		};
+	};
+
+	spi0_display: spi0_display {
+		group1 {
+			pinmux = <GPIO25_SPI_SCLK>,
+				 <GPIO23_SPI_MOSI>;
+			bias-pull-up;
+			input-schmitt-enable;
+		};
+	};
+
+	pwm0_default: pwm0_default {
+		group1 {
+			pinmux = <GPIO14_PWM0_CH2P>;	/* buzzer */
+			bias-pull-up;
+			input-schmitt-enable;
+			drive-strength = <1>;
+		};
+	};
+
+	adc0_default: adc0_default {
+		group1 {
+			pinmux = <GPIO10_ADC_CH7>;	/* VBAT_MES = VBAT/2 */
+		};
+	};
+
+	sf2_default: sf2_default {
+		group1 {
+			pinmux = <GPIO4_SF2_CS>,
+				 <GPIO5_SF2_D1>,
+				 <GPIO6_SF2_D2>,
+				 <GPIO7_SF2_D0>,
+				 <GPIO8_SF2_CLK>,
+				 <GPIO9_SF2_D3>;
+			bias-pull-up;
+			input-schmitt-enable;
+			drive-strength = <2>;
+		};
+	};
+};
+
+&clk_flash {
+	divider = <1>;
+};
+
+&sf_ctrl {
+	use-32b-addresses;
+	override-bank1;
+	no-header;
+};
+
+&sf_bank1 {
+	reg = <0xa0000000 DT_SIZE_M(64)>;
+	ranges = <0x0 0xa0000000 DT_SIZE_M(64)>;
+
+	pinctrl-0 = <&sf2_default>;
+	pinctrl-names = "default";
+
+	w25q512jv: flash@0 {
+		compatible = "bflb,sf-flash", "soc-nv-flash";
+		reg = <0 DT_SIZE_M(64)>;
+		ranges;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		write-block-size = <4>;
+		erase-block-size = <DT_SIZE_K(4)>;
+
+		spi-bus-mode = <2>;
+		use-sfdp;
+		sf-pad = <2>;
+		jedec-id = [ef 40 20];
+
+		/* Quad-output reads retain a single-line command/address phase
+		 * and have no continuous-read mode byte. SFDP supplies QE setup.
+		 */
+		read-command = <0x6b>;
+		read-dummy-cycles = <1>;
+
+		partitions {
+			ranges;
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			boot_header_partition: partition@0 {
+				compatible = "zephyr,mapped-partition";
+				label = "boot_header";
+				reg = <0x00000000 0x2000>;
+				read-only;
+			};
+
+			code_partition: partition@2000 {
+				compatible = "zephyr,mapped-partition";
+				label = "image-0";
+				reg = <0x00002000 (DT_SIZE_M(8) - 0x2000)>;
+				read-only;
+			};
+
+			storage_partition: partition@800000 {
+				compatible = "zephyr,mapped-partition";
+				label = "storage";
+				reg = <DT_SIZE_M(8) DT_SIZE_M(56)>;
+			};
+		};
+	};
+};
+
+&uart0 {
+	status = "okay";
+	current-speed = <115200>;
+
+	pinctrl-0 = <&uart0_default>;
+	pinctrl-1 = <&uart0_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+&i2c0 {
+	status = "okay";
+	clock-frequency = <I2C_BITRATE_FAST>;
+
+	pinctrl-0 = <&i2c0_default>;
+	pinctrl-names = "default";
+
+	lsm6dsv16x: lsm6dsv16x@6a {
+		compatible = "st,lsm6dsv16x";
+		reg = <0x6a>;
+		int1-gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
+		status = "okay";
+	};
+};
+
+&spi0 {
+	status = "okay";
+
+	pinctrl-0 = <&spi0_display>;
+	pinctrl-names = "default";
+
+	cs-gpios = <&gpio0 24 GPIO_ACTIVE_LOW>;
+
+	/* Display push: TX over DMA channel 0 (trigsrc 0xb = SPI0_TX) */
+	dmas = <&dma0 0 0xb>;
+	dma-names = "tx";
+};
+
+&dma0 {
+	status = "okay";
+};
+
+&pwm0 {
+	status = "okay";
+
+	pinctrl-0 = <&pwm0_default>;
+	pinctrl-names = "default";
+};
+
+&adc0 {
+	status = "okay";
+
+	pinctrl-0 = <&adc0_default>;
+	pinctrl-names = "default";
+
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@7 {
+		reg = <7>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <16>;
+		zephyr,input-positive = <7>;
+	};
+};
+
+&wdt0 {
+	status = "okay";
+};
+
+&sec_eng_trng {
+	status = "okay";
+};
+
+&gpio0 {
+	status = "okay";
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&wifi0 {
+	status = "okay";
+};
+
+zephyr_udc0: &usbd {
+	status = "okay";
+
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};

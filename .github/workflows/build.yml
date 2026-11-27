@@ -1,0 +1,120 @@
+name: firmware build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - firmware/**
+      - .github/workflows/build.yml
+  pull_request:
+    paths:
+      - firmware/**
+      - .github/workflows/build.yml
+  workflow_dispatch:
+
+env:
+  ZEPHYR_SDK_VERSION: "1.0.1"
+  CCACHE_DIR: /home/runner/.ccache
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    name: build BL618
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need tags + history for `git describe --tags`
+
+      - name: Resolve artifact name
+        id: ver
+        run: echo "name=blikachu-pocket-$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build gperf ccache dfu-util device-tree-compiler wget \
+            python3-venv python3-pip xz-utils file make libmagic1
+
+      - name: Cache Zephyr SDK
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/zephyr-sdk-${{ env.ZEPHYR_SDK_VERSION }}
+          key: zephyr-sdk-${{ env.ZEPHYR_SDK_VERSION }}-riscv
+
+      - name: Install Zephyr SDK v${{ env.ZEPHYR_SDK_VERSION }} (RISC-V)
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          VER=${{ env.ZEPHYR_SDK_VERSION }}
+          cd ~
+          wget -q "https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${VER}/zephyr-sdk-${VER}_linux-x86_64_minimal.tar.xz"
+          tar xf "zephyr-sdk-${VER}_linux-x86_64_minimal.tar.xz"
+          "zephyr-sdk-${VER}/setup.sh" -t riscv64-zephyr-elf
+
+      - name: Cache pip wheels
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('firmware/requirements.txt') }}
+          restore-keys: pip-
+
+      # west workspace (deps/ + vendor blobs). Unique key per run so a fresh
+      # cache is always saved; restore-keys pulls the most recent one, then
+      # `west update` below fast-forwards it to the pinned Zephyr release.
+      - name: Cache west workspace
+        uses: actions/cache@v4
+        with:
+          path: |
+            firmware/deps
+            firmware/.west
+          key: west-bl618-${{ hashFiles('firmware/west.yml') }}-${{ github.run_id }}
+          restore-keys: west-bl618-${{ hashFiles('firmware/west.yml') }}-
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-bl618-${{ github.run_id }}
+          restore-keys: ccache-bl618-
+
+      - name: Bootstrap west workspace (only hal_bouffalolab, shallow)
+        working-directory: firmware
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install -r requirements.txt requests jsonschema  # west blobs fetch deps
+          mkdir -p .west
+          printf '[manifest]\npath = .\nfile = west.yml\n\n[zephyr]\nbase = deps/zephyr\n' > .west/config
+          # Fetch only this board's HAL; drop every other vendor HAL. Also drop
+          # nrf_hw_models (a bsim model that depends on the filtered hal_nordic).
+          west config manifest.project-filter -- "-hal_.*,-nrf_hw_models,+hal_bouffalolab"
+          west update --narrow -o=--depth=1
+
+      - name: Build bl618
+        working-directory: firmware
+        env:
+          ZEPHYR_SDK_INSTALL_DIR: /home/runner/zephyr-sdk-${{ env.ZEPHYR_SDK_VERSION }}
+        run: ./build.sh
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s || true
+
+      - name: Package artifacts (${{ steps.ver.outputs.name }})
+        working-directory: firmware
+        run: |
+          NAME="${{ steps.ver.outputs.name }}"
+          mkdir -p out
+          for ext in bin dfu.bin elf map; do
+            f="build/zephyr/zephyr.$ext"
+            [ -f "$f" ] && cp "$f" "out/${NAME}.${ext}"
+          done
+          ls -l out
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.ver.outputs.name }}
+          path: firmware/out/*
+          if-no-files-found: error

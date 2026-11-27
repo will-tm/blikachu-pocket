@@ -1,0 +1,32 @@
+--- a/libgambatte/src/mem/rtc.cpp
++++ b/libgambatte/src/mem/rtc.cpp
+@@ -40,12 +40,25 @@
+ 
+    void Rtc::doLatch()
+    {
+-      uint64_t tmp = ((dataDh_ & 0x40) ? haltTime_ : std::time(0)) - baseTime_;
++      const uint64_t now = (dataDh_ & 0x40) ? haltTime_ : std::time(0);
++      uint64_t tmp = now - baseTime_;
+ 
+-      while (tmp > 0x1FF * 86400)
++      /* A restored base can be ahead of a clock that has restarted.
++       * A negative modular delta is not elapsed cartridge time. */
++      if (tmp > INT64_MAX)
+       {
+-         baseTime_ += 0x1FF * 86400;
+-         tmp      -= 0x1FF * 86400;
++         baseTime_ = now;
++         tmp = 0;
++      }
++
++      /* Reduce elapsed time in constant time, preserving the counter's
++       * inclusive 511-day endpoint and carry flag. */
++      const uint64_t period = 0x1FFULL * 86400;
++      if (tmp > period)
++      {
++         const uint64_t wrapped = ((tmp - 1) / period) * period;
++         baseTime_ += wrapped;
++         tmp      -= wrapped;
+          dataDh_   |= 0x80;
+       }
+ 

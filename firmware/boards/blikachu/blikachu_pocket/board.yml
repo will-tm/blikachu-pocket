@@ -1,0 +1,6 @@
+board:
+  name: blikachu_pocket
+  full_name: BLikachu Pocket
+  vendor: blikachu
+  socs:
+    - name: bl618m05q2i

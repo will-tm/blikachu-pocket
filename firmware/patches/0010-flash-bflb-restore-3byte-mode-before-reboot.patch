@@ -1,0 +1,57 @@
+--- a/drivers/flash/flash_bflb.c
++++ b/drivers/flash/flash_bflb.c
+@@ -2875,6 +2875,9 @@
+ 	}
+ }
+ 
++/* Retain the bank-1 state in RAM for reset after in-place firmware updates. */
++static struct device flash_bflb_reset_dev;
++
+ static __ramfunc int flash_bflb_init(const struct device *dev)
+ {
+ 	const struct flash_bflb_bank_config *config = dev->config;
+@@ -3075,7 +3078,44 @@
+ 	}
+ #endif
+ 
++	if (ret == 0 && data->bank == BANK1) {
++		flash_bflb_reset_dev.data = data;
++	}
+ 	return ret;
++}
++
++/* Prepare an XIP flash for a BootROM restart. The caller must execute
++ * only RAM code after this call: XIP intentionally remains disabled.
++ */
++__ramfunc int flash_bflb_prepare_reset(void)
++{
++#if BFLB_HAS_32B
++	struct flash_bflb_bank_data *data = flash_bflb_reset_dev.data;
++	struct bflb_flash_command exit_4byte = {0};
++	int ret;
++
++	if (data == NULL || !data->controller->addr_32bits) {
++		return 0;
++	}
++	ret = flash_bflb_save_xip_state(&flash_bflb_reset_dev);
++	if (ret != 0) {
++		return ret;
++	}
++	ret = flash_bflb_reset(data);
++	if (ret != 0) {
++		return ret;
++	}
++	for (int i = 0; i < BFLB_FLASH_CHIP_RESET_TIMEOUT; i++) {
++		flash_bflb_settle_x(BFLB_FLASH_1RMS);
++	}
++	exit_4byte.spi_mode = BUS_NIO;
++	exit_4byte.cmd_buf[0] = data->cfg.cmd.exit_32bits_addr << 24;
++	ret = flash_bflb_send_command(data, &exit_4byte);
++	flash_bflb_set_32b_enabled(data, false);
++	return ret;
++#else
++	return 0;
++#endif
+ }
+ 
+ static DEVICE_API(flash, flash_bflb_api) = {

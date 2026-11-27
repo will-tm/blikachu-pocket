@@ -1,0 +1,35 @@
+--- a/drivers/clock_control/clock_control_bl61x.c
++++ b/drivers/clock_control/clock_control_bl61x.c
+@@ -955,24 +955,23 @@
+ /* Alternative clock for SPI, DBI, UART, PKA peripherals */
+ static uint32_t clock_control_bl61x_get_160m(const struct device *dev)
+ {
+-	uint32_t tmp;
+-	uint32_t source_clock;
++	struct clock_control_bl61x_data *data = dev->data;
++	uint32_t tmp;
+ 
+ 	tmp = sys_read32(GLB_BASE + GLB_DIG_CLK_CFG1_OFFSET);
+ 	tmp = (tmp & GLB_REG_TOP_MUXPLL_160M_SEL_MSK) >> GLB_REG_TOP_MUXPLL_160M_SEL_POS;
+-	source_clock = clock_control_bl61x_get_fclk(dev);
++	/* The peripheral mux is independent of the CPU root clock. */
+ 	switch (tmp) {
+ 	default:
+ 	case 0:
+-		return source_clock / 2;
++		return BFLB_MUL_CLK(MHZ(160), data->wifipll.top_frequency, BL61X_WIFIPLL_TOP_FREQ);
+ 	case 1:
+-		return source_clock / 3;
++		return data->aupll.top_frequency / 3;
+ 	case 2:
+-		return source_clock / 2;
++		return data->aupll.top_frequency / 2;
+ 	case 3:
+-		return source_clock * 2 / 5;
+-	}
+-	return 0;
++		return data->aupll.top_frequency / 5 * 2;
++	}
+ }
+ 
+ static void clock_control_bl61x_setup_wifipll(const struct device *dev)

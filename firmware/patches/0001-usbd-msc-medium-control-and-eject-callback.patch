@@ -1,0 +1,80 @@
+diff --git a/include/zephyr/usb/class/usbd_msc.h b/include/zephyr/usb/class/usbd_msc.h
+index 66e741f17dd..af2d1f9caec 100644
+--- a/include/zephyr/usb/class/usbd_msc.h
++++ b/include/zephyr/usb/class/usbd_msc.h
+@@ -53,6 +53,8 @@ struct usbd_msc_lun {
+ 		.revision = t10_revision,						\
+ 	}
+ 
++void usbd_msc_set_medium(const char *disk, bool loaded);
++
+ /**
+  * @}
+  */
+diff --git a/subsys/usb/device_next/class/usbd_msc.c b/subsys/usb/device_next/class/usbd_msc.c
+index e98566e691e..0536a0023a7 100644
+--- a/subsys/usb/device_next/class/usbd_msc.c
++++ b/subsys/usb/device_next/class/usbd_msc.c
+@@ -1014,6 +1014,18 @@ struct usbd_class_api msc_bot_api = {
+ LISTIFY(MSC_NUM_INSTANCES, DEFINE_MSC_BOT_DESCRIPTOR, ())
+ LISTIFY(MSC_NUM_INSTANCES, DEFINE_MSC_BOT_CLASS_DATA, ())
+ 
++void usbd_msc_set_medium(const char *disk, bool loaded)
++{
++	struct msc_bot_ctx *ctx = &msc_bot_ctx_0;
++
++	for (int l = 0; l < ctx->registered_luns; l++) {
++		if (strcmp(ctx->luns[l].disk, disk) == 0) {
++			ctx->luns[l].medium_loaded = loaded;
++			return;
++		}
++	}
++}
++
+ K_THREAD_DEFINE(usbd_msc, CONFIG_USBD_MSC_STACK_SIZE,
+ 		usbd_msc_thread, NULL, NULL, NULL,
+ 		CONFIG_SYSTEM_WORKQUEUE_PRIORITY, 0, 0);
+diff --git a/subsys/usb/device_next/class/usbd_msc_scsi.c b/subsys/usb/device_next/class/usbd_msc_scsi.c
+index ad88b08af2a..e5f259c0a0c 100644
+--- a/subsys/usb/device_next/class/usbd_msc_scsi.c
++++ b/subsys/usb/device_next/class/usbd_msc_scsi.c
+@@ -14,6 +14,11 @@
+ #include <zephyr/logging/log.h>
+ LOG_MODULE_DECLARE(usbd_msc, CONFIG_USBD_MSC_LOG_LEVEL);
+ 
++__weak void usbd_msc_on_eject(const char *disk)
++{
++	ARG_UNUSED(disk);
++}
++
+ #define INQUIRY_VERSION_SPC_2	0x04
+ #define INQUIRY_VERSION_SPC_3	0x05
+ #define INQUIRY_VERSION_SPC_4	0x06
+@@ -415,8 +420,13 @@ void scsi_init(struct scsi_ctx *ctx, const char *disk, const char *vendor,
+ 
+ void scsi_reset(struct scsi_ctx *ctx)
+ {
++	/* blikachu: medium_loaded deliberately NOT touched — a bus reset /
++	 * re-enumeration must not "insert" or "eject" the medium. It
++	 * starts false via the scsi_init() memset (host sees no medium
++	 * until the usb shell command / SELECT-hold loads it) and changes
++	 * only through usbd_msc_set_medium() or host START STOP UNIT.
++	 */
+ 	ctx->prevent_removal = false;
+-	ctx->medium_loaded = true;
+ }
+ 
+ /* SPC-5 TEST UNIT READY command */
+@@ -630,7 +640,12 @@ SCSI_CMD_HANDLER(START_STOP_UNIT)
+ 		return illegal_request(ctx, MEDIUM_REMOVAL_PREVENTED);
+ 	}
+ 
++	if (ctx->medium_loaded && !medium_loaded) {
++		usbd_msc_on_eject(ctx->disk);
++	}
++
+ 	ctx->medium_loaded = medium_loaded;
++
+ 	return good(ctx, 0);
+ }
+ 

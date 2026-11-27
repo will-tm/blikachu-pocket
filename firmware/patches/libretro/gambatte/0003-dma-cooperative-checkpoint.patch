@@ -1,0 +1,24 @@
+--- a/libgambatte/src/cpu.cpp
++++ b/libgambatte/src/cpu.cpp
+@@ -15,6 +15,11 @@
+ //   Free Software Foundation, Inc.,
+ //   59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+ //
++
++#ifdef BLIKACHU_DMA_CHECKPOINT
++extern "C" unsigned int lr_dma_checkpoint_requested;
++extern "C" void lr_dma_checkpoint(void);
++#endif
+ 
+ #include "cpu.h"
+ #include "gambatte-memory.h"
+@@ -1996,6 +2001,9 @@
+ 
+ 		pc_ = pc;
+ 		cycleCounter = mem_.event(cycleCounter);
++#ifdef BLIKACHU_DMA_CHECKPOINT
++		if (__atomic_load_n(&lr_dma_checkpoint_requested, __ATOMIC_RELAXED)) lr_dma_checkpoint();
++#endif
+ 	}
+ 
+ 	a_ = a;

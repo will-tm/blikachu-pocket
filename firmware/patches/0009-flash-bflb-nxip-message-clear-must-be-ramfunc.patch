@@ -1,0 +1,21 @@
+--- a/drivers/flash/flash_bflb.c
++++ b/drivers/flash/flash_bflb.c
+@@ -215,8 +215,16 @@
+ 	data->nxip_message_args[2] = arg3;
+ }
+ 
+-static void flash_bflb_nxip_message_clear(struct flash_bflb_bank_data *data)
+-{
++static __ramfunc void flash_bflb_nxip_message_clear(struct flash_bflb_bank_data *data)
++{
++	/* In-place firmware installation cannot call flash-resident logging
++	 * dispatch after erasing it. With logging off, discard the message
++	 * without dereferencing its XIP-resident callback table.
++	 */
++	if (IS_ENABLED(CONFIG_FLASH_LOG_LEVEL_OFF)) {
++		data->nxip_message = NXIP_MSG_NONE;
++		return;
++	}
+ 	if (data->nxip_message > NXIP_MSG_NONE) {
+ 		flash_bflb_nxip_messages[data->nxip_message](data->nxip_message_args[0],
+ 							     data->nxip_message_args[1],

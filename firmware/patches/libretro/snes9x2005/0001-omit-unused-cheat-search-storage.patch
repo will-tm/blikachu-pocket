@@ -1,0 +1,18 @@
+--- a/source/cheats.h
++++ b/source/cheats.h
+@@ -20,15 +20,9 @@
+ {
+    SCheat   c [MAX_CHEATS];
+    uint32_t num_cheats;
+-   uint8_t  CWRAM [0x20000];
+-   uint8_t  CSRAM [0x10000];
+-   uint8_t  CIRAM [0x2000];
+    uint8_t* RAM;
+    uint8_t* FillRAM;
+    uint8_t* SRAM;
+-   uint32_t WRAM_BITS [0x20000 >> 3];
+-   uint32_t SRAM_BITS [0x10000 >> 3];
+-   uint32_t IRAM_BITS [0x2000  >> 3];
+ } SCheatData;
+ 
+ typedef enum

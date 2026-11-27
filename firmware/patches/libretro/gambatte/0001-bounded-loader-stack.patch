@@ -1,0 +1,86 @@
+--- a/libgambatte/libretro/libretro.cpp
++++ b/libgambatte/libretro/libretro.cpp
+@@ -1401,7 +1401,7 @@
+ static bool file_present_in_system(const char *fname)
+ {
+    const char *system_dir = NULL;
+-   char full_path[PATH_MAX_LENGTH];
++   static char full_path[PATH_MAX_LENGTH];
+ 
+    full_path[0] = '\0';
+ 
+@@ -1430,7 +1430,7 @@
+    RFILE *bios_file       = NULL;
+    int64_t bios_size      = 0;
+    int64_t bytes_read     = 0;
+-   char bios_path[PATH_MAX_LENGTH];
++   static char bios_path[PATH_MAX_LENGTH];
+ 
+    bios_path[0] = '\0';
+ 
+@@ -2018,7 +2018,7 @@
+    unsigned line_index    = 0;
+    bool path_valid        = false;
+    unsigned rgb32         = 0;
+-   char palette_path[PATH_MAX_LENGTH];
++   static char palette_path[PATH_MAX_LENGTH];
+ 
+    palette_path[0] = '\0';
+ 
+@@ -2669,7 +2669,7 @@
+    else
+       gambatte_log(RETRO_LOG_INFO, "Rumble environment not supported.\n");
+ 
+-   struct retro_input_descriptor desc[] = {
++   static const struct retro_input_descriptor desc[] = {
+       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,   "D-Pad Left" },
+       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,     "D-Pad Up" },
+       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,   "D-Pad Down" },
+@@ -2683,7 +2683,7 @@
+       { 0 },
+    };
+ 
+-   struct retro_input_descriptor desc_ff[] = { /* ff: fast forward */
++   static const struct retro_input_descriptor desc_ff[] = { /* ff: fast forward */
+       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,   "D-Pad Left" },
+       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,     "D-Pad Up" },
+       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,   "D-Pad Down" },
+@@ -2698,7 +2698,7 @@
+       { 0 },
+    };
+ 
+-   struct retro_input_descriptor desc_ps[] = { /* ps: palette switching */
++   static const struct retro_input_descriptor desc_ps[] = { /* ps: palette switching */
+       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,   "D-Pad Left" },
+       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,     "D-Pad Up" },
+       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,   "D-Pad Down" },
+@@ -2714,7 +2714,7 @@
+       { 0 },
+    };
+ 
+-   struct retro_input_descriptor desc_ff_ps[] = { /* ff: fast forward, ps: palette switching */
++   static const struct retro_input_descriptor desc_ff_ps[] = { /* ff: fast forward, ps: palette switching */
+       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,   "D-Pad Left" },
+       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,     "D-Pad Up" },
+       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,   "D-Pad Down" },
+@@ -2734,16 +2734,16 @@
+    if (libretro_supports_ff_override)
+    {
+       if (libretro_supports_set_variable)
+-         environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, desc_ff_ps);
++         environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void *)desc_ff_ps);
+       else
+-         environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, desc_ff);
++         environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void *)desc_ff);
+    }
+    else
+    {
+       if (libretro_supports_set_variable)
+-         environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, desc_ps);
++         environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void *)desc_ps);
+       else
+-         environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, desc);
++         environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void *)desc);
+    }
+ 
+ #if defined(VIDEO_RGB565) || defined(VIDEO_ABGR1555)

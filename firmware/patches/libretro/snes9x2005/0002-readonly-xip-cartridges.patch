@@ -1,0 +1,492 @@
+--- a/source/memmap.c
++++ b/source/memmap.c
+@@ -13,6 +13,12 @@
+ 
+ #include "snes9x.h"
+ #include "memmap.h"
++#ifdef SNES_READONLY_ROM
++#include "snes_readonly.h"
++#if !defined(LOAD_FROM_MEMORY) || !defined(NO_SPEEDHACKS)
++#error "SNES_READONLY_ROM requires LOAD_FROM_MEMORY and NO_SPEEDHACKS"
++#endif
++#endif
+ #include "cpuexec.h"
+ #include "ppu.h"
+ #include "display.h"
+@@ -52,6 +58,9 @@
+ 
+ void S9xDeinterleaveType1(int32_t TotalFileSize, uint8_t* base)
+ {
++#ifdef SNES_READONLY_ROM
++   return;
++#else
+    int32_t i;
+    uint8_t blocks [256];
+    uint8_t *tmp    = NULL;
+@@ -94,10 +103,14 @@
+       }
+       free(tmp);
+    }
++#endif
+ }
+ 
+ void S9xDeinterleaveGD24(int32_t TotalFileSize, uint8_t* base)
+ {
++#ifdef SNES_READONLY_ROM
++   return;
++#else
+    uint8_t *tmp = NULL;
+    if (TotalFileSize != 0x300000)
+       return;
+@@ -119,6 +132,7 @@
+ 
+       S9xDeinterleaveType1(TotalFileSize, base);
+    }
++#endif
+ }
+ 
+ static bool AllASCII(uint8_t* b, int32_t size)
+@@ -217,6 +231,16 @@
+ 
+ static char* Safe(const char* s)
+ {
++#ifdef SNES_READONLY_ROM
++   static char safe[ROM_NAME_LEN];
++   size_t i;
++   if (!s)
++      return NULL;
++   for (i = 0; i + 1 < sizeof(safe) && s[i]; i++)
++      safe[i] = s[i] >= 32 && s[i] < 127 ? s[i] : '?';
++   safe[i] = 0;
++   return safe;
++#else
+    static char* safe = NULL;
+    static int32_t safe_len = 0;
+    int32_t i;
+@@ -250,6 +274,7 @@
+    }
+    safe [len] = 0;
+    return safe;
++#endif
+ }
+ 
+ /**********************************************************************************************/
+@@ -263,7 +288,16 @@
+    Memory.RAM   = (uint8_t*) calloc(0x20000, 1);
+    Memory.SRAM  = (uint8_t*) calloc(0x20000, 1);
+    Memory.VRAM  = (uint8_t*) calloc(0x10000, 1);
++#ifdef SNES_READONLY_ROM
++   /* BSRAM has no consumers in this core; BS cartridges are rejected. */
++   Memory.BSRAM = NULL;
++#else
+    Memory.BSRAM = (uint8_t*) calloc(0x80000, 1);
++#endif
++#ifdef SNES_READONLY_ROM
++   Memory.ROM = NULL;
++   Memory.FillRAM = (uint8_t*) calloc(0x8000, 1);
++#else
+    /* Don't bother initializing ROM, we will load a game anyway. */
+ #ifdef DS2_DMA
+    Memory.ROM   = (uint8_t*) AlignedMalloc(MAX_ROM_SIZE + 0x200 + 0x8000, 32, &PtrAdj.ROM);
+@@ -272,6 +306,8 @@
+ #endif
+    Memory.FillRAM = NULL;
+ 
++#endif
++
+    IPPU.TileCache [TILE_2BIT] = (uint8_t*) calloc(MAX_2BIT_TILES, 128);
+    IPPU.TileCache [TILE_4BIT] = (uint8_t*) calloc(MAX_4BIT_TILES, 128);
+    IPPU.TileCache [TILE_8BIT] = (uint8_t*) calloc(MAX_8BIT_TILES, 128);
+@@ -280,12 +316,23 @@
+    IPPU.TileCached [TILE_4BIT] = (uint8_t*) calloc(MAX_4BIT_TILES, 1);
+    IPPU.TileCached [TILE_8BIT] = (uint8_t*) calloc(MAX_8BIT_TILES, 1);
+ 
+-   if (!Memory.RAM || !Memory.SRAM || !Memory.VRAM || !Memory.ROM || !Memory.BSRAM || !IPPU.TileCache [TILE_2BIT] || !IPPU.TileCache [TILE_4BIT] || !IPPU.TileCache [TILE_8BIT] || !IPPU.TileCached [TILE_2BIT] || !IPPU.TileCached [TILE_4BIT] ||  !IPPU.TileCached [TILE_8BIT])
++   if (!Memory.RAM || !Memory.SRAM || !Memory.VRAM ||
++#ifdef SNES_READONLY_ROM
++       !Memory.FillRAM ||
++#else
++       !Memory.ROM ||
++#endif
++
++#ifndef SNES_READONLY_ROM
++       !Memory.BSRAM ||
++#endif
++       !IPPU.TileCache [TILE_2BIT] || !IPPU.TileCache [TILE_4BIT] || !IPPU.TileCache [TILE_8BIT] || !IPPU.TileCached [TILE_2BIT] || !IPPU.TileCached [TILE_4BIT] ||  !IPPU.TileCached [TILE_8BIT])
+    {
+       S9xDeinitMemory();
+       return false;
+    }
+ 
++#ifndef SNES_READONLY_ROM
+    /* FillRAM uses first 32K of ROM image area, otherwise space just
+       wasted. Might be read by the SuperFX code. */
+    Memory.FillRAM = Memory.ROM;
+@@ -293,6 +340,8 @@
+    /* Add 0x8000 to ROM image pointer to stop SuperFX code accessing
+       unallocated memory (can cause crash on some ports). */
+    Memory.ROM += 0x8000; /* still 32-byte aligned */
++
++#endif
+ 
+    SuperFX.pvRegisters = &Memory.FillRAM [0x3000];
+    SuperFX.nRamBanks = 2; /* Most only use 1.  1 = 64KB, 2 = 128KB = 1024Mb */
+@@ -321,6 +370,11 @@
+       free(Memory.VRAM);
+       Memory.VRAM = NULL;
+    }
++#ifdef SNES_READONLY_ROM
++   free(Memory.FillRAM);
++   Memory.FillRAM = NULL;
++   Memory.ROM = NULL; /* Borrowed flash mapping, never owned by the core. */
++#else
+    if (Memory.ROM)
+    {
+       Memory.ROM -= 0x8000;
+@@ -331,6 +385,8 @@
+ #endif
+       Memory.ROM = NULL;
+    }
++
++#endif
+ 
+    if (Memory.BSRAM)
+    {
+@@ -616,6 +672,25 @@
+ /* This function loads a Snes-Backup image                                                    */
+ /**********************************************************************************************/
+ 
++#ifdef SNES_READONLY_ROM
++bool S9xReadOnlyValidateGame(const struct retro_game_info* game, bool* hirom)
++{
++   if (!game || !Memory.FillRAM ||
++       !snes_readonly_validate(game->data, game->size, hirom))
++      return false;
++   /* No forced chips, layout guesses, or transformations in the XIP path. */
++   if (Settings.ForceSuperFX || Settings.ForceDSP1 || Settings.ForceSA1 ||
++       Settings.ForceC4 || Settings.ForceSDD1 || Settings.ForceInterleaved ||
++       Settings.ForceInterleaved2 || Settings.ForceHeader ||
++       Settings.ForceHiROM || Settings.ForceLoROM)
++      return false;
++   if (is_bsx((uint8_t*)game->data + 0x7fc0) ||
++       (game->size >= 0x10000 && is_bsx((uint8_t*)game->data + 0xffc0)))
++      return false;
++   return true;
++}
++#endif
++
+ bool LoadROM(
+ #ifdef LOAD_FROM_MEMORY
+       const struct retro_game_info* game
+@@ -624,6 +699,23 @@
+ #endif
+       )
+ {
++#ifdef SNES_READONLY_ROM
++   bool hirom;
++   if (!S9xReadOnlyValidateGame(game, &hirom))
++      return false;
++   Memory.ROM = (uint8_t*)game->data;
++   Memory.CalculatedSize = (uint32_t)game->size;
++   Memory.HeaderCount = 0;
++   Memory.ExtendedFormat = NOPE;
++   Memory.HiROM = hirom;
++   Memory.LoROM = !hirom;
++   memset(bytes0x2000, 0, sizeof(bytes0x2000));
++   CPU.TriedInterleavedMode2 = false;
++   InitROM(false);
++   S9xInitCheatData();
++   S9xReset();
++   return true;
++#else
+    int32_t hi_score, lo_score;
+    int32_t TotalFileSize = 0;
+    bool Interleaved = false;
+@@ -983,6 +1075,7 @@
+    S9xApplyCheats();
+    S9xReset();
+    return true;
++#endif
+ }
+ 
+ /* compatibility wrapper */
+@@ -993,6 +1086,9 @@
+ 
+ void S9xDeinterleaveType2(bool reset)
+ {
++#ifdef SNES_READONLY_ROM
++   return;
++#else
+    uint32_t TmpAdj;
+    uint8_t *tmp;
+    uint8_t blocks [256];
+@@ -1062,6 +1158,7 @@
+       InitROM(false);
+       S9xReset();
+    }
++#endif
+ }
+ 
+ void ParseSNESHeader(uint8_t* RomHeader)
+@@ -1133,6 +1230,7 @@
+    if (Memory.HiROM)
+       RomHeader += 0x8000;
+ 
++#ifndef SNES_READONLY_ROM
+    if (!Settings.BS)
+    {
+       Settings.BS = is_bsx(Memory.ROM + 0x7FC0);
+@@ -1153,6 +1251,8 @@
+       }
+    }
+ 
++#endif
++
+    memset(Memory.BlockIsRAM, 0, MEMMAP_NUM_BLOCKS);
+    memset(Memory.BlockIsROM, 0, MEMMAP_NUM_BLOCKS);
+ 
+@@ -1161,6 +1261,30 @@
+ 
+    ParseSNESHeader(RomHeader);
+ 
++#ifdef SNES_READONLY_ROM
++   SetDSP = NULL;
++   GetDSP = NULL;
++   if (Memory.HiROM)
++      HiROMMap();
++   else
++      LoROMMap();
++   /* Each 4 KiB ROM block must stay wholly inside the borrowed image.
++    * Address-line mirroring repeats the final chip, not the entire image. */
++   {
++      unsigned block;
++      for (block = 0; block < MEMMAP_NUM_BLOCKS; block++)
++         if (Memory.BlockIsROM[block])
++         {
++            size_t bank = block >> 4;
++            size_t address = (block & 15) << 12;
++            size_t offset = Memory.HiROM ? ((bank & 63) << 16) + address :
++                  ((bank & 127) << 15) + (address & 0x7fff);
++            offset = snes_readonly_mirror(Memory.CalculatedSize, offset);
++            Memory.Map[block] = (uint8_t*)((uintptr_t)Memory.ROM + offset - address);
++         }
++      WriteProtectROM();
++   }
++#else
+    /* Detect and initialize chips - detection codes are compatible with NSRT */
+ 
+    /* DSP1/2/3/4 */
+@@ -1338,6 +1462,8 @@
+       else
+          LoROMMap();
+    }
++
++#endif
+ 
+    if (Settings.BS)
+       Memory.ROMRegion = 0;
+@@ -2908,11 +3034,13 @@
+       bytes0x2000 [0xb1a] = 0xea;
+    }
+ 
++#ifndef SNES_READONLY_ROM
+    if(Settings.BS && Memory.LoROM &&
+       match_na("F-ZERO") &&
+       Memory.ROMChecksum == 0xb10d &&
+       Memory.ROMComplementChecksum == 0x4ef2)
+      Memory.ROM[0x7fd0] = 0xFF; /* fix memory pack position bits */
++#endif
+ }
+ 
+ /* 7FC0h or FFC0h */
+--- a/source/memmap.h
++++ b/source/memmap.h
+@@ -35,6 +35,9 @@
+ 
+ #ifdef LOAD_FROM_MEMORY
+ bool LoadROM(const struct retro_game_info* game);
++#ifdef SNES_READONLY_ROM
++bool S9xReadOnlyValidateGame(const struct retro_game_info* game, bool* hirom);
++#endif
+ #else
+ bool LoadROM(const char*);
+ #endif
+--- a/source/cheats2.c
++++ b/source/cheats2.c
+@@ -72,6 +72,10 @@
+ 
+ void S9xRemoveCheat(uint32_t which1)
+ {
++#ifdef SNES_READONLY_ROM
++   (void)which1;
++   return;
++#else
+    if (Cheat.c [which1].saved)
+    {
+       uint32_t address = Cheat.c [which1].address;
+@@ -86,10 +90,15 @@
+       /* Unsave the address for the next call to S9xRemoveCheat. */
+       Cheat.c [which1].saved = false;
+    }
++#endif
+ }
+ 
+ void S9xApplyCheat(uint32_t which1)
+ {
++#ifdef SNES_READONLY_ROM
++   (void)which1;
++   return;
++#else
+    int32_t block;
+    uint8_t *ptr;
+    uint32_t address = Cheat.c [which1].address;
+@@ -105,6 +114,7 @@
+    else
+       S9xSetByte(Cheat.c [which1].byte, address);
+    Cheat.c [which1].saved = true;
++#endif
+ }
+ 
+ void S9xApplyCheats(void)
+--- a/libretro.c
++++ b/libretro.c
+@@ -264,6 +264,14 @@
+    GFX.ZBuffer_buffer = (uint8_t *) malloc((GFX.Pitch >> 1) * h + safety);
+    GFX.SubZBuffer_buffer = (uint8_t *) malloc((GFX.Pitch >> 1) * h + safety);
+ 
++#ifdef SNES_READONLY_ROM
++   if (!GFX.Screen_buffer || !GFX.SubScreen_buffer ||
++       !GFX.ZBuffer_buffer || !GFX.SubZBuffer_buffer)
++   {
++      S9xDeinitDisplay();
++      return;
++   }
++#endif
+    GFX.Screen = GFX.Screen_buffer + safety;
+    GFX.SubScreen = GFX.SubScreen_buffer + safety;
+    GFX.ZBuffer = GFX.ZBuffer_buffer + safety;
+@@ -427,6 +435,10 @@
+ #endif
+ }
+ 
++#ifdef SNES_READONLY_ROM
++static bool readonly_ready;
++#endif
++
+ void retro_init(void)
+ {
+    struct retro_log_callback log;
+@@ -446,10 +458,21 @@
+       log_cb(RETRO_LOG_INFO, "Frontend supports RGB565 - will use that instead of XRGB1555.\n");
+ 
+    init_sfc_setting();
++#ifdef SNES_READONLY_ROM
++   readonly_ready = false;
++   if (!S9xInitMemory() || !S9xInitAPU())
++      goto readonly_fail;
++   S9xInitDisplay();
++   if (!GFX.Screen || !GFX.SubScreen || !GFX.ZBuffer || !GFX.SubZBuffer ||
++       !S9xInitGFX())
++      goto readonly_fail;
++   readonly_ready = true;
++#else
+    S9xInitMemory();
+    S9xInitAPU();
+    S9xInitDisplay();
+    S9xInitGFX();
++#endif
+ #ifdef USE_BLARGG_APU
+    S9xInitSound(0, 0); /* Use default values */
+    S9xSetSamplesAvailableCallback(S9xAudioCallback);
+@@ -460,10 +483,21 @@
+ 
+    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
+       libretro_supports_bitmasks = true;
++#ifdef SNES_READONLY_ROM
++   return;
++readonly_fail:
++   S9xDeinitGFX();
++   S9xDeinitDisplay();
++   S9xDeinitAPU();
++   S9xDeinitMemory();
++#endif
+ }
+ 
+ void retro_deinit(void)
+ {
++#ifdef SNES_READONLY_ROM
++   readonly_ready = false;
++#endif
+    if (Settings.SPC7110)
+       Del7110Gfx();
+ 
+@@ -981,14 +1015,21 @@
+ 
+ void retro_cheat_reset(void)
+ {
++#ifdef SNES_READONLY_ROM
++   return;
++#else
+    S9xDeleteCheats();
+    S9xApplyCheats();
++#endif
+ }
+ 
+ extern SCheatData Cheat;
+ 
+ void retro_cheat_set(unsigned index, bool enabled, const char* code)
+ {
++#ifdef SNES_READONLY_ROM
++   return;
++#else
+    uint32_t address;
+    uint8_t val;
+ 
+@@ -1009,6 +1050,7 @@
+ 
+    Settings.ApplyCheats = true;
+    S9xApplyCheats();
++#endif
+ }
+ 
+ static void init_descriptors(void)
+@@ -1088,6 +1130,11 @@
+ 
+ bool retro_load_game(const struct retro_game_info* game)
+ {
++#ifdef SNES_READONLY_ROM
++   bool hirom;
++   if (!readonly_ready || !S9xReadOnlyValidateGame(game, &hirom))
++      return false;
++#endif
+    if (!game)
+       return false;
+ 
+@@ -1105,7 +1152,15 @@
+    Settings.FrameTime = (Settings.PAL ? Settings.FrameTimePAL : Settings.FrameTimeNTSC);
+ 
+    retro_set_audio_buff_status_cb();
++
++#ifdef SNES_READONLY_ROM
++   audio_out_buffer_deinit();
++#endif
+    audio_out_buffer_init();
++#ifdef SNES_READONLY_ROM
++   if (!audio_out_buffer)
++      return false;
++#endif
+ #ifndef USE_BLARGG_APU
+    S9xSetPlaybackRate(Settings.SoundPlaybackRate);
+ #endif
+@@ -1123,6 +1178,11 @@
+ 
+ void retro_unload_game(void)
+ {
++#ifdef SNES_READONLY_ROM
++   audio_out_buffer_deinit();
++   Memory.ROM = NULL;
++   Memory.CalculatedSize = 0;
++#endif
+ }
+ 
+ void* retro_get_memory_data(unsigned type)

@@ -1,0 +1,66 @@
+--- a/source/gfx.c
++++ b/source/gfx.c
+@@ -688,7 +688,8 @@
+    {
+       int32_t j, Y;
+       /* First, find out which sprites are on which lines */
+-      uint8_t OBJOnLine[SNES_HEIGHT_EXTENDED][128];
++      /* Single-instance renderer scratch belongs in BSS, not the caller stack. */
++      static uint8_t OBJOnLine[SNES_HEIGHT_EXTENDED][128];
+       /* We only initialise this per line, as needed. [Neb]
+        * Bonus: We can quickly avoid looping if a line has no OBJs. */
+       bool AnyOBJOnLine[SNES_HEIGHT_EXTENDED];
+--- a/libretro.c
++++ b/libretro.c
+@@ -5,6 +5,7 @@
+ #include "memmap.h"
+ #include "apu.h"
+ #include "cheats.h"
++#include <stddef.h>
+ #include "display.h"
+ #include "gfx.h"
+ #include "cpuexec.h"
+@@ -931,7 +932,6 @@
+    uintptr_t IAPU_RAM_offset;
+ #endif
+    uint32_t sa1_old_flags = SA1.Flags;
+-   SSA1 sa1_state;
+ 
+    if (size != retro_serialize_size())
+       return false;
+@@ -973,20 +973,21 @@
+    buffer += SPC_SAVE_STATE_BLOCK_SIZE;
+ #endif
+ 
+-   memcpy(&sa1_state, buffer, sizeof(sa1_state));
+-   buffer += sizeof(sa1_state);
+-
+-   /* SA1 state must be restored 'by hand' */
+-   SA1.Flags               = sa1_state.Flags;
+-   SA1.NMIActive           = sa1_state.NMIActive;
+-   SA1.IRQActive           = sa1_state.IRQActive;
+-   SA1.WaitingForInterrupt = sa1_state.WaitingForInterrupt;
+-   SA1.op1                 = sa1_state.op1;
+-   SA1.op2                 = sa1_state.op2;
+-   SA1.arithmetic_op       = sa1_state.arithmetic_op;
+-   SA1.sum                 = sa1_state.sum;
+-   SA1.overflow            = sa1_state.overflow;
+-   memcpy(&SA1.Registers, &sa1_state.Registers, sizeof(SA1.Registers));
++   /* Copy only the restored fields; the serialized map arrays need no
++    * stack snapshot. memcpy also handles an unaligned state buffer. */
++#define RESTORE_SA1(field) memcpy(&SA1.field, buffer + offsetof(SSA1, field), sizeof(SA1.field))
++   RESTORE_SA1(Flags);
++   RESTORE_SA1(NMIActive);
++   RESTORE_SA1(IRQActive);
++   RESTORE_SA1(WaitingForInterrupt);
++   RESTORE_SA1(op1);
++   RESTORE_SA1(op2);
++   RESTORE_SA1(arithmetic_op);
++   RESTORE_SA1(sum);
++   RESTORE_SA1(overflow);
++   RESTORE_SA1(Registers);
++#undef RESTORE_SA1
++   buffer += sizeof(SSA1);
+ 
+    memcpy(&s7r, buffer, sizeof(s7r));
+    buffer += sizeof(s7r);

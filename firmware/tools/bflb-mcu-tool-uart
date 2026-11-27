@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Run the vendor flasher with the W25Q512JV boot profile and capacity.
+
+BootROM firmware programming uses three-byte addresses below 8 MiB.
+The flash's address mode is checked before programming. Firmware enables
+four-byte access after boot for the full 64 MiB chip. The vendor density
+decoder cannot handle Winbond's 0x20 capacity code, so ef4020 is corrected
+here. Vendor programming failures propagate as a nonzero exit status.
+"""
+
+import sys
+
+from bflb_flash_support import configure_flash
+from libs import bflb_utils
+from bflb_mcu_tool.__main__ import run_main
+from libs.bflb_eflash_loader import BflbEflashLoader
+
+vendor_flash_get_size = BflbEflashLoader.flash_get_size
+vendor_read_jedec_id = BflbEflashLoader.flash_read_jedec_id_process
+
+
+def read_jedec_id(self, *args, **kwargs):
+    ok, data = vendor_read_jedec_id(self, *args, **kwargs)
+    if not ok or bytes(data[:3]) != bytes.fromhex("ef4020"):
+        return ok, data
+    # A software MCU reset does not clear the flash's global address
+    # mode. BootROM programming uses 3-byte addresses below 8 MiB.
+    self._need_handshake = False
+    ok, _ = self.flash_write_status_reg_process("e9", 0, "0")
+    if not ok:
+        return False, data
+    ok, status = self.flash_read_status_reg_process("15", 1)
+    if not ok or status[0] & 1:
+        raise RuntimeError("W25Q512JV did not leave 4-byte address mode")
+    return True, data
+
+
+def flash_get_size(jedec_id):
+    if jedec_id.lower() == "ef4020":
+        return 64 * 1024 * 1024
+    return vendor_flash_get_size(jedec_id)
+
+
+if __name__ == "__main__":
+    configure_flash()
+    BflbEflashLoader.flash_get_size = staticmethod(flash_get_size)
+    BflbEflashLoader.flash_read_jedec_id_process = read_jedec_id
+    run_main()
+    if bflb_utils.get_error_code() not in ("FFFF", "0000"):
+        sys.exit(1)

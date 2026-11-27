@@ -1,0 +1,23 @@
+Subject: flash: bflb: flash_bflb_is_valid_range must live in RAM
+
+Every erase/write op calls flash_bflb_is_valid_range, but unlike the
+rest of the op path it is not __ramfunc. Normally harmless (it runs
+before the XIP suspension), but when the flash region being rewritten
+CONTAINS the driver itself (OTA rewriting the running image), the op
+loop calls it after its backing flash content has changed -> the CPU
+fetches a half-overwritten instruction stream and faults (observed:
+K_ERR_CPU_EXCEPTION at 0xa00d3e56 ~868 KB into a whole-image rewrite).
+
+diff --git a/drivers/flash/flash_bflb.c b/drivers/flash/flash_bflb.c
+--- a/drivers/flash/flash_bflb.c
++++ b/drivers/flash/flash_bflb.c
+@@ -231,7 +231,8 @@
+ }
+ 
+ /* Are we doing something that makes sense? ? */
+-static int flash_bflb_is_valid_range(struct flash_bflb_bank_data *data, off_t offset, size_t len)
++static __ramfunc int flash_bflb_is_valid_range(struct flash_bflb_bank_data *data, off_t offset,
++					       size_t len)
+ {
+ 	if (offset < 0) {
+ 		LOG_WRN("0x%lx: before start of flash", (long)offset);

@@ -1,0 +1,21 @@
+diff --git a/drivers/flash/flash_bflb.c b/drivers/flash/flash_bflb.c
+index e7e62ae5e79..92a1081707e 100644
+--- a/drivers/flash/flash_bflb.c
++++ b/drivers/flash/flash_bflb.c
+@@ -3108,7 +3108,15 @@ static DEVICE_API(flash, flash_bflb_api) = {
+ 	.cfg.parameters.write_block_size = DT_PROP_OR(_n, write_block_size,		\
+ 							DUMMY_WRITE_ALIGN),		\
+ 	.cfg.parameters.erase_value = ERASE_VALUE,					\
+-	.cfg.reg = {0}
++	/* Default to the universal SR1.WIP busy poll (RDSR 05h, bit 0).
++	 * With no-header and no SFDP nothing else fills cfg.reg, and a
++	 * zeroed busy_read_len makes flash_bflb_flash_busy_wait() a
++	 * no-op: erase/write then return while the chip is still busy,
++	 * the XIP-restore continuous-read re-entry is ignored by the
++	 * busy chip, and the next XIP fetch returns bus garbage —
++	 * hard-wedging an XIP system with IRQs locked.
++	 */									\
++	.cfg.reg = { .busy_index = 0, .busy_bit = 0, .busy_read_len = 1 }
+ 
+ #define FLASH_BFLB_PAD_SET_CFG(_n)							\
+ 	.cfg.pad.id = DT_PROP(_n, sf_pad),						\

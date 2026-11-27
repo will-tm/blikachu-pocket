@@ -1,0 +1,65 @@
+name: bl618 pcb 3d render
+
+# Renders a 3D visualization of the BL618 hardware PCB with kicad-cli (KiCad 10,
+# official container incl. 3D model libs). On changes to the board it refreshes
+# hardware/pcb-3d.png (used in the README) and commits it back to main; on PRs
+# it just uploads the render as an artifact for review.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - hardware/**
+      - "!hardware/pcb-3d.png"
+      - .github/workflows/pcb-render.yml
+  pull_request:
+    paths:
+      - hardware/**
+      - "!hardware/pcb-3d.png"
+      - .github/workflows/pcb-render.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/kicad/kicad:nightly-full   # KiCad 10 + packages3D
+      options: --user root                       # so actions/* can write runner temp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render BL618 PCB (isometric, orthographic, raytraced)
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          kicad-cli pcb render \
+            --output hardware/pcb-3d.png \
+            --width 1600 --height 1200 \
+            --quality high --floor \
+            --rotate '-30,0,-45' \
+            hardware/blikachu-pocket.kicad_pcb
+
+      - name: Upload render artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bl618-pcb-3d
+          path: hardware/pcb-3d.png
+          if-no-files-found: error
+
+      # Keep the README image current: commit the refreshed render back to main.
+      # PRs only get the artifact above. The push trigger is path-filtered to
+      # hardware/**, so committing the excluded image does not re-trigger the job.
+      - name: Commit refreshed render
+        if: github.event_name == 'push'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add hardware/pcb-3d.png
+          if git diff --staged --quiet; then
+            echo "render unchanged"
+          else
+            git commit -m "ci: refresh bl618 PCB 3D render [skip ci]"
+            git push
+          fi

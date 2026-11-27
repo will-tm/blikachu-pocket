@@ -1,0 +1,44 @@
+# Build output
+build*/
+cmake-build*/
+
+# West workspace and SDK dependencies
+.west/
+deps/
+
+# Python virtual environment
+.venv/
+
+# Editor/IDE
+.vscode/
+.idea/
+.history/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Cache
+.cache/
+
+# KiCad (hardware/)
+*-backups/
+_autosave-*
+*.bak
+*.kicad_pcb-bak
+*.kicad_sch-bak
+*.lck
+fp-info-cache
+*.net
+
+# KiCad fabrication outputs (regenerated from sources)
+gerbers/
+fabrication/
+production/
+*.gbr
+*.drl
+
+# KiCad local editor settings
+*.kicad_prl

@@ -1,0 +1,25 @@
+--- a/src/ppu.c
++++ b/src/ppu.c
+@@ -18,6 +18,11 @@
+  * along with this program; if not, write to the Free Software
+  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+  */
++
++#ifdef BLIKACHU_DMA_CHECKPOINT
++extern unsigned int lr_dma_checkpoint_requested;
++void lr_dma_checkpoint(void);
++#endif
+ 
+ #include        <string.h>
+ #include        <stdlib.h>
+@@ -1278,6 +1283,10 @@
+ 			for (scanline = 0; (unsigned)scanline < totalscanlines; ) {	/* scanline is incremented in  DoLine.  Evil. :/ */
+ 				deempcnt[deemp]++;
+ 				DoLine();
++#ifdef BLIKACHU_DMA_CHECKPOINT
++				if (!(scanline & 3) && __atomic_load_n(&lr_dma_checkpoint_requested, __ATOMIC_RELAXED))
++					lr_dma_checkpoint();
++#endif
+ 				if ((unsigned)scanline < normal_scanlines || (unsigned)scanline == totalscanlines)
+ 					overclocked = 0;
+ 				else {
