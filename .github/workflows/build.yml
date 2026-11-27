@@ -110,11 +110,21 @@ jobs:
             f="build/zephyr/zephyr.$ext"
             [ -f "$f" ] && cp "$f" "out/${NAME}.${ext}"
           done
+          test -s "out/${NAME}.dfu.bin"
           ls -l out
 
       - name: Upload firmware artifacts
+        id: upload_firmware
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: ${{ steps.ver.outputs.name }}
           path: firmware/out/*
           if-no-files-found: error
+          retention-days: 3
+
+      - name: Report unavailable firmware artifacts
+        if: steps.upload_firmware.outcome == 'failure'
+        run: |
+          echo "::warning::Firmware built successfully, but artifact upload failed."
+          echo "Firmware built successfully, but artifact upload failed; binaries are unavailable for this run." >> "$GITHUB_STEP_SUMMARY"
