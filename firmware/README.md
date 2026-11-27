@@ -118,6 +118,16 @@ use atomic file replacement and are retained across firmware updates.
 The settings file is `/NAND:/.blikachu.cfg`. Initialize a new LittleFS
 volume explicitly with `umount`, `mkfs`, `mount`.
 
+Without Wi-Fi, the CDC uploader accepts ROMs and libretro save files:
+
+```bash
+source .venv/bin/activate
+python tools/usb_upload.py --port /dev/cu.usbmodemXXXXX game.gbc save.lrstate
+```
+
+The sender waits for chunk acknowledgements; the device verifies the
+complete CRC before publishing the ROM or save.
+
 The WebUI on the board's WiFi address provides ROM upload/delete, remote play
 and WiFi OTA. Provision a network through the shell:
 

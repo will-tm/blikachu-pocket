@@ -12,6 +12,7 @@
 #include <strings.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/shell/shell.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
@@ -317,6 +318,7 @@ static void menu_thread_fn(void *a, void *b, void *c)
 	scan_roms();
 	redraw_all();
 	input_set_handler(menu_input_cb);
+	LOG_INF("menu ready: %d ROMs", g_rom_count);
 
 	for (;;) {
 		k_sem_take(&g_kick, K_FOREVER);
@@ -365,6 +367,16 @@ void menu_start(void)
 	k_sem_init(&g_kick, 0, 1);
 	g_started = true;
 	k_thread_create(&g_thread, g_stack, K_THREAD_STACK_SIZEOF(g_stack), menu_thread_fn, NULL,
-			NULL, NULL, K_PRIO_PREEMPT(15), 0, K_NO_WAIT);
+			NULL, NULL, K_PRIO_PREEMPT(12), 0, K_NO_WAIT);
 	k_thread_name_set(&g_thread, "menu");
 }
+
+static int cmd_menu_refresh(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	menu_refresh();
+	shell_print(sh, "menu refresh requested");
+	return 0;
+}
+SHELL_CMD_REGISTER(menu, NULL, "Refresh the game menu", cmd_menu_refresh);

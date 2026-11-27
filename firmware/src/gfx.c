@@ -210,6 +210,19 @@ int gfx_blit_data(const void *buf, size_t len)
 #define MAX_BLIT_ROWS 32
 static BLIKACHU_BIGBUF uint16_t g_blit_buf[LCD_WIDTH * MAX_BLIT_ROWS];
 
+static void panel_write(int x, int y, const struct display_buffer_descriptor *desc,
+			const void *buf)
+{
+	int rc = display_write(display_dev, x, y, desc, buf);
+
+	if (rc) {
+		rc = display_write(display_dev, x, y, desc, buf);
+		if (rc) {
+			LOG_ERR_RATELIMIT("panel write (%d,%d) failed: %d", x, y, rc);
+		}
+	}
+}
+
 static void panel_fill(int x, int y_panel, int w, int h, uint16_t color)
 {
 	struct display_buffer_descriptor desc = {
@@ -227,7 +240,7 @@ static void panel_fill(int x, int y_panel, int w, int h, uint16_t color)
 		}
 		desc.height = chunk;
 		desc.buf_size = n * sizeof(uint16_t);
-		(void)display_write(display_dev, x, row, &desc, g_blit_buf);
+		panel_write(x, row, &desc, g_blit_buf);
 		row += chunk;
 		remaining -= chunk;
 	}
@@ -311,7 +324,7 @@ void gfx_draw_char(int x, int y, char c, uint16_t fg, uint16_t bg)
 		.height = 8,
 		.pitch = 8,
 	};
-	(void)display_write(display_dev, x, y + LCD_VIEW_Y, &desc, buf);
+	panel_write(x, y + LCD_VIEW_Y, &desc, buf);
 }
 
 void gfx_draw_text(int x, int y, const char *s, uint16_t fg, uint16_t bg)

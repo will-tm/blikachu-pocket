@@ -27,6 +27,7 @@ zephyr_ld_options(-Wl,--wrap=__cxa_atexit)
 target_sources(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/storage_shell.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/usb_upload.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/emu_shell.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/emu.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/menu.c
