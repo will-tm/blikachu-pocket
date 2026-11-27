@@ -59,6 +59,10 @@ int fw_image_check(const uint8_t *img, size_t *len)
 			(unsigned int)(*len - HDR_SIZE));
 		return -EINVAL;
 	}
+	if (app_len > DT_REG_SIZE(DT_NODELABEL(code_partition))) {
+		LOG_ERR("image overlaps storage partition");
+		return -EFBIG;
+	}
 	st = psa_crypto_init();
 	if (st == PSA_SUCCESS) {
 		st = psa_hash_compute(PSA_ALG_SHA_256, &img[HDR_SIZE], app_len, sha, sizeof(sha),

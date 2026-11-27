@@ -1,5 +1,5 @@
 /*
- * Tiny persisted key/value store on the FATFS volume. Format: one
+ * Tiny persisted key/value store on the LittleFS volume. Format: one
  * `key=value\n` per line in /NAND:/.blikachu.cfg. The whole file lives
  * in a 512-byte buffer — plenty for device settings, and small enough
  * that rewriting the file on every set is a non-issue (the flash
@@ -17,6 +17,7 @@
 #include "storage.h"
 
 #define SETTINGS_PATH    STORAGE_MOUNT_POINT "/.blikachu.cfg"
+#define SETTINGS_TEMP    STORAGE_MOUNT_POINT "/.blikachu.tmp"
 #define SETTINGS_BUF_MAX 512
 
 static K_MUTEX_DEFINE(g_lock);
@@ -33,11 +34,12 @@ static ssize_t load_locked(void)
 
 	g_buf[0] = '\0';
 	/* Stat first — fs_open logs an ERR for a missing file. */
-	if (fs_stat(SETTINGS_PATH, &ent) != 0) {
-		return 0;
+	int rc = fs_stat(SETTINGS_PATH, &ent);
+	if (rc != 0) {
+		return rc == -ENOENT ? 0 : rc;
 	}
 	fs_file_t_init(&fp);
-	int rc = fs_open(&fp, SETTINGS_PATH, FS_O_READ);
+	rc = fs_open(&fp, SETTINGS_PATH, FS_O_READ);
 
 	if (rc) {
 		return rc;
@@ -57,15 +59,18 @@ static int store_locked(const char *content, size_t len)
 	struct fs_file_t fp;
 
 	fs_file_t_init(&fp);
-	int rc = fs_open(&fp, SETTINGS_PATH, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
+	int rc = fs_open(&fp, SETTINGS_TEMP, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
 
 	if (rc) {
 		return rc;
 	}
 	ssize_t wr = fs_write(&fp, content, len);
-
-	(void)fs_close(&fp);
-	return (wr == (ssize_t)len) ? 0 : -EIO;
+	rc = wr == (ssize_t)len ? fs_sync(&fp) : -EIO;
+	int close_rc = fs_close(&fp);
+	if (!rc) {
+		rc = close_rc;
+	}
+	return rc ? rc : fs_rename(SETTINGS_TEMP, SETTINGS_PATH);
 }
 
 /* Find the value of `key` inside g_buf. Returns pointer to the value

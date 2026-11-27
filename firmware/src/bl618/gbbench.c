@@ -238,19 +238,10 @@ static int cmd_bench_run(const struct shell *sh, size_t argc, char **argv)
 	}
 
 	if (path != NULL) {
-		/* Same flow as the real firmware's `emu run`: resolve the
-		 * FATFS file to its XIP window, defrag + retry if the
-		 * cluster chain isn't contiguous.
-		 */
+		/* Resolve the ROM catalogue entry to its contiguous XIP extent. */
 		const char *err = NULL;
 
 		g_rom = resolve_file_xip(path, &rom_size, &err);
-		if (g_rom == NULL && err == STORAGE_ERR_FRAGMENTED) {
-			shell_print(sh, "%s is fragmented — defragging...", path);
-			if (storage_defrag_file(path) == 0) {
-				g_rom = resolve_file_xip(path, &rom_size, &err);
-			}
-		}
 		if (g_rom == NULL) {
 			shell_error(sh, "%s: %s", path, err ? err : "resolve failed");
 			return -EIO;

@@ -9,17 +9,14 @@
 #include <strings.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/usb/usbd.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/device.h>
-#include <zephyr/storage/disk_access.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/drivers/display.h>
 #include <zephyr/pm/device.h>
 
-#include <zephyr/usb/class/usbd_msc.h>
 
 #include "bootanim.h"
 #include "charger.h"
@@ -36,7 +33,6 @@
 LOG_MODULE_REGISTER(blikachu, LOG_LEVEL_INF);
 
 #include "platform.h"
-#include "storage_shell.h"
 
 static int cmd_reboot(const struct shell *sh, size_t argc, char **argv)
 {
@@ -148,7 +144,6 @@ SHELL_CMD_REGISTER(sleep, NULL, "Deepest sleep (no RAM retention), wake on SELEC
  * through here (they poke the joypad word directly).
  *
  *  - START held >1.5 s      → deep sleep
- *  - SELECT held >1.5 s     → toggle USB mass-storage mode (menu only)
  *  - SELECT + UP / DOWN     → volume up / down (0..11)
  *  - SELECT + LEFT / RIGHT  → backlight dimmer / brighter (1..10)
  *
@@ -176,9 +171,8 @@ static K_WORK_DELAYABLE_DEFINE(g_sleep_longpress, sleep_longpress_work_fn);
 
 /* Idle auto-sleep: 5 minutes without a button press while the MENU is
  * showing AND running on battery. Rearmed by every physical input
- * event (the hotkey filter sees them all); a running game, active
- * USB-MSC session, or external power (charger PG) postpones rather
- * than sleeps.
+ * event (the hotkey filter sees them all); a running game or
+ * external power (charger PG) postpones sleep.
  */
 #define IDLE_SLEEP_TIMEOUT K_MINUTES(5)
 
@@ -191,7 +185,7 @@ static void idle_sleep_work_fn(struct k_work *w)
 	struct emu_stats s;
 
 	emu_get_stats(&s);
-	if (s.running || usb_mode_active() || charger_input_present()) {
+	if (s.running || charger_input_present()) {
 		k_work_reschedule(&g_idle_sleep, IDLE_SLEEP_TIMEOUT);
 		return;
 	}
@@ -218,43 +212,12 @@ static bool g_select_held;     /* physical state */
 static bool g_select_pending;  /* press not yet delivered to handler */
 static bool g_select_was_chord;
 
-/* SELECT held >1.5 s in the MENU toggles USB mass-storage mode. Armed on
- * the SELECT press, disarmed on release and whenever a chord claims
- * SELECT (otherwise a long volume-adjust session would fire it). When
- * it fires, the held SELECT is consumed like a chord so the menu never
- * sees a tap on release. In-game it does nothing — SELECT belongs to
- * the game there.
- */
-static void usb_longpress_work_fn(struct k_work *w)
-{
-	ARG_UNUSED(w);
-	struct emu_stats s;
-
-	emu_get_stats(&s);
-	if (s.running) {
-		return; /* menu only */
-	}
-
-	g_select_was_chord = true;
-	g_select_pending = false;
-
-	if (usb_mode_active()) {
-		LOG_INF("SELECT held — exiting USB mode");
-		usb_mode_exit();
-	} else {
-		LOG_INF("SELECT held — entering USB mode");
-		usb_mode_enter();
-	}
-}
-static K_WORK_DELAYABLE_DEFINE(g_usb_longpress, usb_longpress_work_fn);
-
 static void select_flush(void)
 {
 	if (g_select_pending) {
 		input_inject(INPUT_BTN_SELECT, true);
 		g_select_pending = false;
 		g_select_was_chord = false;
-		(void)k_work_cancel_delayable(&g_usb_longpress);
 	}
 }
 
@@ -363,7 +326,6 @@ static bool system_hotkeys_filter(struct input_event *evt)
 		if (evt->value && g_select_held && emu_current_system() == EMU_SYSTEM_SNES) {
 			g_select_was_chord = true;
 			g_select_pending = false;
-			(void)k_work_cancel_delayable(&g_usb_longpress);
 			snes_chords |= BIT(snes_id);
 			emu_retro_button(snes_id, true);
 			return true;
@@ -385,11 +347,9 @@ static bool system_hotkeys_filter(struct input_event *evt)
 			g_select_held = true;
 			g_select_pending = true;
 			g_select_was_chord = false;
-			k_work_reschedule(&g_usb_longpress, LONGPRESS_TIMEOUT);
 			return true; /* defer */
 		}
 		g_select_held = false;
-		(void)k_work_cancel_delayable(&g_usb_longpress);
 		if (g_select_pending && !g_select_was_chord) {
 			/* Plain tap: deliver it now, cleanly. */
 			g_select_pending = false;
@@ -412,7 +372,6 @@ static bool system_hotkeys_filter(struct input_event *evt)
 		if (g_select_held && evt->value) {
 			g_select_was_chord = true;
 			g_select_pending = false;
-			(void)k_work_cancel_delayable(&g_usb_longpress);
 			(void)hotkey_level_adjust(evt->code);
 			return true;
 		}
@@ -430,7 +389,6 @@ static bool system_hotkeys_filter(struct input_event *evt)
 			if (st.running) {
 				g_select_was_chord = true;
 				g_select_pending = false;
-				(void)k_work_cancel_delayable(&g_usb_longpress);
 				bool save = (evt->code == INPUT_BTN_B);
 				int rc = save ? emu_state_save(NULL) : emu_state_restore(NULL);
 
@@ -473,7 +431,6 @@ int main(void)
 		(reset_cause & RESET_WATCHDOG) ? " WDT" : "",
 		(reset_cause & RESET_DEBUG) ? " DBG" : "");
 
-	(void)disk_access_init(STORAGE_DISK_NAME);
 	/* The first mount after a tool/OTA reset fails intermittently
 	 * (rc gets logged; root cause still open) — retry with backoff
 	 * instead of silently booting without storage.

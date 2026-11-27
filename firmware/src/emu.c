@@ -364,10 +364,6 @@ static void worker_fn(void *a, void *b, void *c)
 	size_t rom_size;
 	storage_guard_lock();
 	const uint8_t *rom = storage_pin_rom(rom_path, &rom_size, &error, &pin);
-	if (!rom && error == STORAGE_ERR_FRAGMENTED) {
-		hud_show_text("DEFRAGMENTING...");
-		if (!storage_defrag_file(rom_path)) rom = storage_pin_rom(rom_path, &rom_size, &error, &pin);
-	}
 	int rc = rom ? emu_content_identify(rom_path, rom, rom_size, &content) : -EIO;
 	if (!rc) {
 		current_system = content.system;

@@ -101,6 +101,16 @@ jobs:
         if: always()
         run: ccache -s || true
 
+      - name: Test LittleFS catalogue publication
+        working-directory: firmware
+        run: |
+          cc -std=c11 -O2 '-D__maybe_unused=__attribute__((unused))' \
+            -DLFS_NO_DEBUG -DLFS_NO_WARN -DLFS_NO_ERROR \
+            -Ideps/modules/fs/littlefs tests/littlefs_publication.c \
+            deps/modules/fs/littlefs/lfs.c deps/modules/fs/littlefs/lfs_util.c \
+            -o build/littlefs_publication
+          build/littlefs_publication
+
       - name: Package artifacts (${{ steps.ver.outputs.name }})
         working-directory: firmware
         run: |

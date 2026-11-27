@@ -49,7 +49,8 @@ confirmation. Do not format storage or erase user ROMs/saves without approval.
   `perfclock` measures CPU cycles against the machine timer and reports clock configuration.
 - U3 W25Q512JV: JEDEC `ef4020`, 64 MiB, SF2 GPIO4–9.
 - Flash: boot header 0–0x2000; application 0x2000–0x800000;
-  FATFS storage 0x800000–0x4000000 (56 MiB), disk `NAND`, mount `/NAND:`.
+  LittleFS 0x800000–0x1000000 (8 MiB), mount `/NAND:`;
+  contiguous XIP ROM extents 0x1000000–0x4000000 (48 MiB).
   Four-byte addressing and quad-output XIP (`0x6b`, SFDP QE setup) are enabled.
   Flash uses the BCLK source with divider 1, without continuous-read mode.
   The RAM reset hook restores the
@@ -61,7 +62,7 @@ confirmation. Do not format storage or erase user ROMs/saves without approval.
 - Buttons: UP15, LEFT16, DOWN17, RIGHT18, START29, B30, SELECT31, A32.
 - Buzzer: GPIO14/PWM0 channel 2. PWM channels share a period, so do not
   move the backlight onto PWM0.
-- UART0: TX21/RX22. USB HS has dedicated pins; CDC + MSC + DFU composite.
+- UART0: TX21/RX22. USB HS has dedicated pins; CDC + DFU composite.
 - Charger MCP73871: STAT1=11, STAT2=12, PG=13. Battery sense GPIO10/ADC7.
 - LED0 GPIO34 is active-low on the PCB.
 - Power latch: U6 74LVC1G80, R40 ties D to inverted Q. GPIO19 must be
@@ -85,7 +86,7 @@ helpers. The installer copies driver dispatch structures into RAM and uses
 `reboot.c` for a real BL61x reset (Zephyr's default RISC-V reset is a stub).
 
 An interrupted in-place install is NOT power-fail-safe; recover via BootROM.
-FAT mounts do not automatically format missing/invalid filesystems.
+LittleFS mounts do not automatically format missing/invalid filesystems.
 The hash checks corruption, not image authenticity. There is no signed-image
 secure boot or A/B rollback.
 
@@ -97,8 +98,8 @@ secure boot or A/B rollback.
   under `.saves/`; launches cold-boot and restore separate battery/RTC files.
 - `emu vol [0-11]`, `emu mute on/off`, `bright [1-10]`
 - `cfg list/get/set/del`: `/NAND:/.blikachu.cfg`
-- `mount`, `umount`, `disk`, `romaddr`, `fs ls /NAND:`, `usb`
-- `mkfs` and `wipe` are destructive; ask before using them.
+- `mount`, `umount`, `disk`, `romaddr`, `romcrc`, `fs ls /NAND:`
+- `mkfs` is destructive; ask before using it.
 - `wifi_cred add/list/del`, Zephyr `wifi` commands, WebUI on HTTP port 80.
 - `ota apply [path]`: checked whole-flash image, default `/NAND:/update.bin`.
 - `resetinfo` first after unexpected resets; saved fault record is in
@@ -107,7 +108,7 @@ secure boot or A/B rollback.
 
 Hotkeys: SELECT+START quits; SELECT+B saves; SELECT+A restores;
 SELECT+UP/DOWN changes volume; SELECT+LEFT/RIGHT changes brightness.
-Long SELECT toggles USB mode from the menu; long START requests power-off.
+Long START requests power-off.
 SELECT is deferred so system chords are not delivered as game input.
 SNES uses physical A/B for B/Y, SELECT+A/B for A/X and SELECT+LEFT/RIGHT
 for L/R. Save/restore and brightness are available through the shell.
@@ -127,9 +128,10 @@ Its linker overlays are in `src/libretro/memory.ld`; core data/BSS must be
 initialized only after claiming the region. Gambatte constructors are kept
 out of the boot-time constructor list. Core heap and update staging usage
 are not reflected by the linker's static CORE_RAM occupancy.
-FatFs uses reentrant operations and file-sharing locks; the ROM remains open
-read-only while its XIP bytes are borrowed. The storage guard covers mapping
-and workspace acquisition as well as volume mutations.
+LittleFS stores the ROM catalogue separately from immutable raw flash
+extents. Uploads verify the new extent before atomically publishing its
+record. The storage guard covers mapping, workspace acquisition and ROM
+mutations while a core borrows XIP bytes.
 
 The libretro frontend selects Gambatte, FCEUmm or Snes9x2005 from the
 ROM header/extension. `lrprobe <path> [frames]` exercises core lifecycle,

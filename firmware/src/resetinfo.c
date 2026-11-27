@@ -150,8 +150,8 @@ static const struct device *const wdt = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(wdt0)
 static const struct device *const wdt; /* feeder becomes stall-check only */
 #endif
 
-/* Long foreground flash operations (multi-MB WebUI commits, big FAT
- * chain unlinks) legitimately exceed the BL61x 1.9 s wdt ceiling —
+/* Long foreground flash operations (multi-MB WebUI commits, filesystem
+ * updates) legitimately exceed the BL61x 1.9 s wdt ceiling —
  * pause/resume instead of sprinkling feeds through fs internals.
  */
 static volatile bool g_wdt_paused;
@@ -214,7 +214,7 @@ static void wdt_feeder(void *a, void *b, void *c)
 		if ((tick++ % (4)) == 0) {
 			emu_stall_check();
 		}
-		/* BL61x wdt maxes at ~2 s and big FATFS writes hold IRQs
+		/* BL61x wdt maxes at ~2 s and large flash writes hold IRQs
 		 * locked in back-to-back per-sector windows — a 1 s sleep
 		 * starves past the timeout mid-write. Feed often; the
 		 * emu-stall check stays effectively 1 Hz via its own

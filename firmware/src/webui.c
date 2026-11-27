@@ -27,6 +27,7 @@
 #include <zephyr/net/wifi_mgmt.h>
 
 #include "emu.h"
+#include "menu.h"
 
 #include "psram_buf.h"
 #include "storage.h"
@@ -212,11 +213,8 @@ static int roms_handler(struct http_client_ctx *client, enum http_transaction_st
 	size_t o = 0;
 
 	fs_dir_t_init(&dir);
-	struct fs_statvfs sv = {0};
-
-	(void)fs_statvfs(STORAGE_MOUNT_POINT, &sv);
 	o += snprintf(g_json + o, sizeof(g_json) - o, "{\"free\":%llu,\"roms\":[",
-		      (unsigned long long)sv.f_bfree * sv.f_frsize);
+		      (unsigned long long)storage_rom_free());
 	if (fs_opendir(&dir, STORAGE_MOUNT_POINT) == 0) {
 		bool first = true;
 
@@ -227,9 +225,16 @@ static int roms_handler(struct http_client_ctx *client, enum http_transaction_st
 			if (o + strlen(ent.name) + 48 > sizeof(g_json)) {
 				break;
 			}
+			char path[sizeof(STORAGE_MOUNT_POINT) + sizeof(ent.name) + 1];
+			size_t size;
+
+			snprintf(path, sizeof(path), STORAGE_MOUNT_POINT "/%s", ent.name);
+			if (storage_rom_info(path, &size)) {
+				continue;
+			}
 			o += snprintf(g_json + o, sizeof(g_json) - o,
 				      "%s{\"name\":\"%s\",\"size\":%u}",
-				      first ? "" : ",", ent.name, (unsigned)ent.size);
+				      first ? "" : ",", ent.name, (unsigned)size);
 			first = false;
 		}
 		fs_closedir(&dir);
@@ -244,10 +249,7 @@ static int roms_handler(struct http_client_ctx *client, enum http_transaction_st
 
 /* ---- POST /api/upload?name= ---- */
 
-/* Uploads stage into PSRAM and hit FATFS once at the end — 256-byte
- * HTTP chunks straight to fs_write mean thousands of read-modify-
- * write flash cycles (minutes for a 1 MB ROM).
- */
+/* Uploads stage into PSRAM before committing verified ROM extents or files. */
 #define UPLOAD_MAX LR_STAGING_BYTES
 #define g_up_buf ((uint8_t *)lr_workspace_data())
 uint8_t *webui_staging_buf(size_t *cap)
@@ -278,90 +280,60 @@ static bool g_up_active;
 static size_t g_up_len;
 static const void *g_up_client; /* owner of the in-flight upload */
 
-/* resetinfo.c: the BL61x wdt tops out at 1.9 s; multi-MB FATFS
- * commits and big chain unlinks legitimately run longer.
+/* resetinfo.c: the BL61x wdt tops out at 1.9 s; multi-MB flash
+ * commits and filesystem updates legitimately run longer.
  */
 extern void resetinfo_wdt_pause(void);
 extern void resetinfo_wdt_resume(void);
 
 static int up_commit(void)
 {
+	int rc = storage_mount();
+	if (rc) {
+		return rc;
+	}
+	if (emu_content_extension_supported(g_up_path)) {
+		return storage_rom_install(g_up_path, g_up_buf, g_up_len);
+	}
+	/* Ordinary files (including OTA images) are published only after a
+	 * complete synced write, preserving the previous file on interruption.
+	 */
+	const char *temp = STORAGE_MOUNT_POINT "/.upload.tmp";
 	struct fs_file_t f;
-	int rc = -EIO;
-
 	struct fs_statvfs sv;
 
-	/* Boot mount is still flaky after tool/OTA resets — rescue
-	 * here rather than failing the user's upload.
-	 */
-	if (fs_statvfs(STORAGE_MOUNT_POINT, &sv) != 0) {
-		LOG_WRN("commit: /NAND: not mounted — mounting now");
-		(void)storage_mount();
-	}
-
-	/* Preflight: a commit that hits ENOSPC mid-write strands the
-	 * partially-allocated cluster chain (lost clusters, only mkfs
-	 * reclaims them) — refuse instead.
-	 */
-	if (fs_statvfs(STORAGE_MOUNT_POINT, &sv) == 0 &&
-	    (uint64_t)sv.f_bfree * sv.f_frsize < g_up_len + (64 * 1024)) {
-		LOG_WRN("commit: need %zu, free %llu — refusing", g_up_len,
-			(unsigned long long)sv.f_bfree * sv.f_frsize);
+	if (fs_statvfs(STORAGE_MOUNT_POINT, &sv) ||
+	    (uint64_t)sv.f_bfree * sv.f_frsize < g_up_len + 64 * 1024) {
 		return -ENOSPC;
 	}
-
+	storage_guard_lock();
 	resetinfo_wdt_pause();
 	fs_file_t_init(&f);
-	/* Only unlink what exists — a blind unlink makes the fs layer
-	 * log a scary-looking ENOENT for every fresh filename.
-	 */
-	{
-		struct fs_dirent ent;
-
-		if (fs_stat(g_up_path, &ent) == 0) {
-			(void)fs_unlink(g_up_path);
-		}
-	}
-	if (fs_open(&f, g_up_path, FS_O_CREATE | FS_O_WRITE) == 0) {
-		size_t off = 0;
-
-		rc = 0;
-		while (off < g_up_len && rc == 0) {
-			size_t chunk = MIN((size_t)(64 * 1024), g_up_len - off);
-			ssize_t wr = -1;
-
-			/* Flash writes can transiently fail while the radio
-			 * is still busy right after the transfer — retry
-			 * before declaring the commit dead.
-			 */
-			for (int attempt = 0; attempt < 3; attempt++) {
-				wr = fs_write(&f, &g_up_buf[off], chunk);
-				if (wr == (ssize_t)chunk) {
-					break;
-				}
-				LOG_WRN("commit: write @%zu rc=%d (attempt %d)",
-					off, (int)wr, attempt + 1);
-				if (wr > 0) {
-					off += wr; /* partial: continue after it */
-					chunk -= wr;
-				}
-				k_sleep(K_MSEC(100));
-			}
+	rc = fs_open(&f, temp, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
+	if (!rc) {
+		for (size_t off = 0; !rc && off < g_up_len;) {
+			size_t chunk = MIN((size_t)(16 * 1024), g_up_len - off);
+			ssize_t wr = fs_write(&f, g_up_buf + off, chunk);
 			if (wr != (ssize_t)chunk) {
 				rc = -EIO;
+			} else {
+				off += chunk;
 			}
-			off += chunk;
-			/* Breathe between bursts: let the radio/feeder run
-			 * and cap the sustained flash current.
-			 */
-			k_sleep(K_MSEC(20));
+			k_sleep(K_MSEC(1));
 		}
-		fs_close(&f);
+		if (!rc) {
+			rc = fs_sync(&f);
+		}
+		int close_rc = fs_close(&f);
+		if (!rc) {
+			rc = close_rc;
+		}
 	}
-	if (rc != 0) {
-		(void)fs_unlink(g_up_path);
+	if (!rc) {
+		rc = fs_rename(temp, g_up_path);
 	}
 	resetinfo_wdt_resume();
+	storage_guard_unlock();
 	LOG_INF("upload: commit %s (%zu bytes) rc=%d", g_up_path, g_up_len, rc);
 	return rc;
 }
@@ -435,6 +407,9 @@ static int upload_handler(struct http_client_ctx *client, enum http_transaction_
 
 		g_up_active = false;
 		webui_staging_release();
+		if (!rc && emu_content_extension_supported(g_up_path)) {
+			menu_refresh();
+		}
 		snprintf(cmsg, sizeof(cmsg), rc == 0 ? "ok" : "err:%d", rc);
 		response_ctx->body = (uint8_t *)cmsg;
 		response_ctx->body_len = strlen(cmsg);
@@ -472,6 +447,9 @@ static int delete_handler(struct http_client_ctx *client, enum http_transaction_
 
 	resetinfo_wdt_resume();
 	storage_guard_unlock();
+	if (!rc && emu_content_extension_supported(name)) {
+		menu_refresh();
+	}
 
 	LOG_INF("delete %s: %d", path, rc);
 	response_ctx->body = (uint8_t *)(rc == 0 ? "ok" : "err");

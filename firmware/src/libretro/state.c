@@ -29,8 +29,17 @@ static int transfer(const struct lr_session *session, const char *path, uint32_t
 {
 	struct state_header header = {STATE_MAGIC, 1, session->system, rom_crc, kind, size, 0};
 	struct fs_file_t file;
+	char temp[128];
+	const char *io_path = path;
+	if (!restore) {
+		int n = snprintf(temp, sizeof(temp), "%s.tmp", path);
+		if (n < 0 || (size_t)n >= sizeof(temp)) {
+			return -ENAMETOOLONG;
+		}
+		io_path = temp;
+	}
 	fs_file_t_init(&file);
-	int rc = fs_open(&file, path, restore ? FS_O_READ : FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
+	int rc = fs_open(&file, io_path, restore ? FS_O_READ : FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
 	if (rc != 0) {
 		return rc;
 	}
@@ -64,10 +73,15 @@ static int transfer(const struct lr_session *session, const char *path, uint32_t
 		if (fs_write(&file, &header, sizeof(header)) != sizeof(header) ||
 		    fs_write(&file, data, size) != (ssize_t)size) {
 			rc = -EIO;
+		} else {
+			rc = fs_sync(&file);
 		}
 	}
 	int close_rc = fs_close(&file);
-	return rc ? rc : close_rc;
+	if (!rc) {
+		rc = close_rc;
+	}
+	return rc || restore ? rc : fs_rename(temp, path);
 }
 
 int lr_state_file(struct lr_session *session, const char *path, uint32_t rom_crc, bool restore)

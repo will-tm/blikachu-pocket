@@ -228,7 +228,7 @@ static void connect_work_fn(struct k_work *w)
 }
 
 /* Both net_mgmt callbacks run on the tiny net_mgmt event thread —
- * defer real work (FATFS reads, HUD drawing through gfx) to the
+ * defer real work (LittleFS reads, HUD drawing through gfx) to the
  * system workqueue (8K stack).
  */
 static void retry_work_fn(struct k_work *w)

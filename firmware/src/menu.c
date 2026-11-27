@@ -105,9 +105,16 @@ static void scan_roms(void)
 		if (g_rom_count >= MAX_ROMS) {
 			break;
 		}
+		char path[sizeof(ROMS_DIR) + sizeof(ent.name) + 1];
+		size_t rom_size;
+
+		snprintf(path, sizeof(path), ROMS_DIR "/%s", ent.name);
+		if (storage_rom_info(path, &rom_size)) {
+			continue;
+		}
 		(void)snprintf(g_roms[g_rom_count].name, ROM_NAME_MAX, "%.*s",
 			       (int)(ROM_NAME_MAX - 1), ent.name);
-		g_roms[g_rom_count].size = ent.size;
+		g_roms[g_rom_count].size = rom_size;
 		g_rom_count++;
 	}
 	fs_closedir(&dir);
@@ -139,8 +146,7 @@ static void draw_list(void)
 
 	if (g_rom_count == 0) {
 		gfx_draw_text(8, y + 16, "no ROM files", DIM_COLOR, BG_COLOR);
-		gfx_draw_text(8, y + 32, "in /NAND: — copy via", DIM_COLOR, BG_COLOR);
-		gfx_draw_text(8, y + 48, "USB then SELECT.", DIM_COLOR, BG_COLOR);
+		gfx_draw_text(8, y + 32, "Use Wi-Fi ROM manager", DIM_COLOR, BG_COLOR);
 		return;
 	}
 
@@ -340,10 +346,6 @@ static void menu_thread_fn(void *a, void *b, void *c)
 			}
 			scan_roms();
 			redraw_all();
-			/* Refresh is also the landing path out of USB mode /
-			 * host eject, which parked the input handler on NULL —
-			 * take input back or the menu comes up dead.
-			 */
 			input_set_handler(menu_input_cb);
 			break;
 		}

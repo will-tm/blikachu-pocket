@@ -1,6 +1,5 @@
 /*
- * USB next-stack composite device: CDC ACM (console / shell) + MSC
- * (NAND flash-disk) + DFU (BL618 firmware update).
+ * USB next-stack composite device: CDC ACM (console / shell) + DFU (BL618 firmware update).
  *
  * Replaces the legacy `usb_enable()` flow. Construct the descriptor
  * tree statically, register all linked classes, and bring the
@@ -11,10 +10,8 @@
 
 #include <zephyr/device.h>
 #include <zephyr/usb/usbd.h>
-#include <zephyr/usb/class/usbd_msc.h>
 #include <zephyr/logging/log.h>
 
-#include "storage.h"
 #if defined(CONFIG_USBD_DFU)
 #include "fw_install.h"
 #endif
@@ -32,11 +29,6 @@ USBD_DESC_CONFIG_DEFINE(g_hs_cfg_desc, "HS Configuration");
 
 USBD_CONFIGURATION_DEFINE(g_fs_config, USB_SCD_SELF_POWERED, 200, &g_cfg_desc);
 USBD_CONFIGURATION_DEFINE(g_hs_config, USB_SCD_SELF_POWERED, 200, &g_hs_cfg_desc);
-
-/* Define the MSC LUN backed by the flash-disk registered in the DT
- * (compatible = "zephyr,flash-disk", disk-name = "NAND").
- */
-USBD_DEFINE_MSC_LUN(nand, STORAGE_DISK_NAME, "BLikachu", "NAND", "0.00");
 
 /* USB DFU (src/bl618/usb_dfu.c): the DFU-mode instance sits in the
  * application configuration; the run-time DETACH instance is unused.
@@ -116,7 +108,7 @@ int usbd_setup(void)
 		return err;
 	}
 
-	/* Composite device with CDC ACM (multi-interface) + MSC needs the
+	/* Composite device with CDC ACM (multi-interface) + DFU needs the
 	 * IAD class triple (Miscellaneous, Common, IAD).
 	 */
 	usbd_device_set_code_triple(&g_blikachu_usbd, USBD_SPEED_FS, USB_BCC_MISCELLANEOUS, 0x02,
@@ -138,21 +130,4 @@ int usbd_setup(void)
 	}
 
 	return 0;
-}
-
-int usbd_setup_reattach(void)
-{
-	int err = usbd_disable(&g_blikachu_usbd);
-
-	if (err) {
-		LOG_ERR("usbd_disable: %d", err);
-		return err;
-	}
-	/* Long enough for the host to register the detach. */
-	k_msleep(150);
-	err = usbd_enable(&g_blikachu_usbd);
-	if (err) {
-		LOG_ERR("usbd_enable: %d", err);
-	}
-	return err;
 }

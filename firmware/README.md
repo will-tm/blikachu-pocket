@@ -105,16 +105,18 @@ within the lower 8 MiB; firmware enables 4-byte access to the full chip.
 
 ## Storage and ROMs
 
-W25Q512JV flash: 64 MiB total, with the first 8 MiB reserved for firmware
-(including its 8 KiB boot header) and the remaining 56 MiB exposed as the
-`NAND` FAT disk. The controller uses 4-byte addresses.
+W25Q512JV flash: 64 MiB total, divided into 8 MiB firmware, 8 MiB LittleFS
+for settings, saves, OTA files and the ROM catalogue, and 48 MiB raw NOR
+for contiguous XIP ROMs. LittleFS uses copy-on-write metadata and dynamic
+wear leveling. Uploads allocate a new extent, verify its CRC and atomically
+publish the catalogue entry; a replacement leaves the old ROM intact until
+publication succeeds. ROM access never needs a defragmentation pass.
 
-Enter USB mass-storage mode with the menu or long SELECT. Copy your own
-`.gb`, `.gbc`, `.nes`, `.sfc` or `.smc` ROMs to `NAND`, then eject from the host before returning to
-the menu. Do not access the FAT filesystem concurrently from host and device.
-Settings and save states are retained across subsequent firmware updates.
-The settings file is `/NAND:/.blikachu.cfg`; copy any existing settings to
-this filename before upgrading from another firmware.
+Upload your own `.gb`, `.gbc`, `.nes`, `.sfc` or `.smc` files through the
+WebUI. USB exposes CDC shell and DFU, not mass storage. Settings and saves
+use atomic file replacement and are retained across firmware updates.
+The settings file is `/NAND:/.blikachu.cfg`. Initialize a new LittleFS
+volume explicitly with `umount`, `mkfs`, `mount`.
 
 The WebUI on the board's WiFi address provides ROM upload/delete, remote play
 and WiFi OTA. Provision a network through the shell:
@@ -160,7 +162,6 @@ Hotkeys:
 - SELECT+START: quit to menu.
 - SELECT+B / SELECT+A: save / restore state.
 - SELECT+UP/DOWN: volume; SELECT+LEFT/RIGHT: brightness.
-- Long SELECT: toggle USB mode from the menu.
 - Long START: request power-off.
 
 SNES uses physical A/B for B/Y and SELECT+A/B for A/X. SELECT+LEFT/RIGHT
