@@ -23,7 +23,7 @@ LOG_MODULE_REGISTER(gfx, LOG_LEVEL_INF);
 
 static const struct device *display_dev;
 
-/* ---- Backlight (GPIO28, timer soft-PWM, Q2 low-side switch) ---- */
+/* ---- Backlight (GPIO28/PWM0 CH0, Q2 low-side switch) ---- */
 
 static int g_brightness = GFX_BRIGHT_DEFAULT;
 
@@ -31,9 +31,6 @@ static void backlight_apply(int level)
 {
 	/* Quadratic: LED luminance vs perception — level 1 ≈ 1% duty,
 	 * 10 = 100%.
-	 */
-	/* Kernel-timer soft-PWM (platform_bl618.c) — the bflb PWM's global
-	 * period is owned by the buzzer.
 	 */
 	extern void platform_backlight_set_pct(int pct);
 

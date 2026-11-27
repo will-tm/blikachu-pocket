@@ -1,12 +1,14 @@
 /*
  * blikachu-pocket platform backend — BL618 (v2.0 hardware).
- * Toggle power latch and timer-driven display backlight.
+ * Toggle power latch and fixed-carrier PWM backlight.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/clock_control.h>
+#include <zephyr/drivers/pwm.h>
+#include <bouffalolab/common/pwm_v2_reg.h>
 #include <zephyr/dt-bindings/clock/bflb_bl61x_clock.h>
 #include <zephyr/sys/sys_io.h>
 #include <bouffalolab/bl61x/bflb_soc.h>
@@ -45,63 +47,50 @@ static void pwr_latch_set(bool hold)
 	gpio_pin_set_dt(&pwr_clk, 0);
 }
 
-/* ---- Backlight soft-PWM ----
- * The hardware PWM channels share the buzzer's period. Use the kernel's
- * monotonic timeout queue for the independent 1 kHz backlight instead.
- * A delayed expiry is recovered by the kernel timer scheduler; no absolute
- * peripheral comparator can remain stranded behind a free-running counter.
+/* PWM0 has one shared period register. Configure its 50 kHz carrier
+ * once; the backlight and buzzer subsequently write only their thresholds.
  */
-#define BL_PERIOD_US 1000U
-static const struct gpio_dt_spec g_bl_gpio =
-	GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), backlight_gpios);
-static uint32_t g_bl_duty_us;
+#define PWM_CARRIER_HZ 50000U
+#define PWM_BASE DT_REG_ADDR(DT_PWMS_CTLR(DT_ALIAS(backlight)))
+static const struct pwm_dt_spec backlight = PWM_DT_SPEC_GET(DT_ALIAS(backlight));
+static const struct pwm_dt_spec buzzer = PWM_DT_SPEC_GET(DT_ALIAS(buzzer));
+static unsigned int g_pwm_period;
 
-static void bl_duty_cb(struct k_timer *timer)
+static void pwm_init_fixed(void)
 {
-	ARG_UNUSED(timer);
-	if (g_bl_duty_us < BL_PERIOD_US) {
-		(void)gpio_pin_set_dt(&g_bl_gpio, 0);
+	uint64_t clock;
+	if (!device_is_ready(backlight.dev)) {
+		return;
+	}
+	int rc = pwm_get_cycles_per_sec(backlight.dev, backlight.channel, &clock);
+	unsigned int period = rc ? 0 : clock / PWM_CARRIER_HZ;
+	if (!rc && period) {
+		rc = pwm_set_cycles(backlight.dev, backlight.channel, period, 0, backlight.flags);
+	}
+	if (!rc && period) {
+		rc = pwm_set_cycles(buzzer.dev, buzzer.channel, period, 0, buzzer.flags);
+	}
+	if (!rc && period) {
+		g_pwm_period = period;
+	} else {
+		LOG_ERR("fixed PWM init failed: %d", rc);
 	}
 }
-K_TIMER_DEFINE(bl_duty_timer, bl_duty_cb, NULL);
 
-static void bl_top_cb(struct k_timer *timer)
+unsigned int platform_pwm_period(void)
 {
-	ARG_UNUSED(timer);
-	uint32_t duty = g_bl_duty_us;
-
-	(void)gpio_pin_set_dt(&g_bl_gpio, duty != 0);
-	if (duty > 0 && duty < BL_PERIOD_US) {
-		k_timer_start(&bl_duty_timer, K_USEC(duty), K_NO_WAIT);
-	}
+	return g_pwm_period;
 }
-K_TIMER_DEFINE(bl_top_timer, bl_top_cb, NULL);
 
 void platform_backlight_set_pct(int pct)
 {
-	static bool ready;
-
-	if (!device_is_ready(g_bl_gpio.port)) {
+	if (!g_pwm_period) {
 		return;
 	}
-	unsigned int key = irq_lock();
-	if (!ready) {
-		if (gpio_pin_configure_dt(&g_bl_gpio, GPIO_OUTPUT_INACTIVE) != 0) {
-			irq_unlock(key);
-			return;
-		}
-		ready = true;
-	}
-	k_timer_stop(&bl_top_timer);
-	k_timer_stop(&bl_duty_timer);
-	g_bl_duty_us = BL_PERIOD_US * CLAMP(pct, 0, 100) / 100U;
-	/* Endpoints are static GPIO states, independent of timer delivery. */
-	(void)gpio_pin_set_dt(&g_bl_gpio, g_bl_duty_us != 0);
-	if (g_bl_duty_us > 0 && g_bl_duty_us < BL_PERIOD_US) {
-		k_timer_start(&bl_duty_timer, K_USEC(g_bl_duty_us), K_NO_WAIT);
-		k_timer_start(&bl_top_timer, K_USEC(BL_PERIOD_US), K_USEC(BL_PERIOD_US));
-	}
-	irq_unlock(key);
+	uint32_t pulse = g_pwm_period * CLAMP(pct, 0, 100) / 100U;
+
+	sys_write32(pulse << PWM_CH0_THREH_SHIFT,
+		    PWM_BASE + PWM_MC0_CH0_THRE_OFFSET + backlight.channel * 4);
 }
 
 void platform_init(void)
@@ -112,7 +101,7 @@ void platform_init(void)
 	pwr_latch_set(true);
 	LOG_INF("power latch %s (~Q=GPIO19 readback)",
 		gpio_pin_get_dt(&pwr_d) == 1 ? "engaged" : "NOT engaged");
-
+	pwm_init_fixed();
 }
 
 void platform_reboot(void)

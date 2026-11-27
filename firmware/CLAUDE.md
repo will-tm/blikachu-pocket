@@ -58,10 +58,10 @@ confirmation. Do not format storage or erase user ROMs/saves without approval.
   8 MiB in three-byte mode. The project flasher registers the ef4020 profile,
   checks the address-mode status and propagates programming failures.
 - ST7789V 240x240 SPI/DMA, visible viewport 240x216; MOSI23, CS24,
-  SCLK25, DC26, RESET27, TE20. Backlight GPIO28 uses kernel-timer soft-PWM.
+  SCLK25, DC26, RESET27, TE20. Backlight GPIO28 uses PWM0 channel 0.
 - Buttons: UP15, LEFT16, DOWN17, RIGHT18, START29, B30, SELECT31, A32.
-- Buzzer: GPIO14/PWM0 channel 2. PWM channels share a period, so do not
-  move the backlight onto PWM0.
+- Buzzer: GPIO14/PWM0 channel 2. Both channels share a fixed 50 kHz
+  carrier; brightness, PCM audio and menu tones change only their duty.
 - UART0: TX21/RX22. USB HS has dedicated pins; CDC + DFU composite.
 - Charger MCP73871: STAT1=11, STAT2=12, PG=13. Battery sense GPIO10/ADC7.
 - LED0 GPIO34 is active-low on the PCB.

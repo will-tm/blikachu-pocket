@@ -72,6 +72,7 @@
 
 	aliases {
 		buzzer = &pwm_buzzer;
+		backlight = &pwm_backlight;
 		watchdog0 = &wdt0;
 		vbat-adc = &adc0;
 		led0 = &led_0;
@@ -80,12 +81,6 @@
 	zephyr,user {
 		/* ST7789V tear-effect output. */
 		te-gpios = <&gpio0 20 GPIO_ACTIVE_HIGH>;
-		/* Backlight moved off PWM0 (single global period shared
-		 * with the buzzer — every note retuned it): timer0
-		 * soft-PWM drives the pin as plain GPIO instead.
-		 */
-		backlight-gpios = <&gpio0 28 GPIO_ACTIVE_HIGH>;
-
 		/* MCP73871 status outputs (open-drain, LED-loaded — internal
 		 * pull-ups required for a solid released level).
 		 */
@@ -184,6 +179,9 @@
 
 	pwmleds {
 		compatible = "pwm-leds";
+		pwm_backlight: pwm_backlight {
+			pwms = <&pwm0 0 0 PWM_POLARITY_NORMAL>;	/* GPIO28 CH0P */
+		};
 		pwm_buzzer: pwm_buzzer {
 			pwms = <&pwm0 2 0 PWM_POLARITY_NORMAL>;	/* GPIO14 CH2P */
 		};
@@ -270,7 +268,7 @@
 
 	pwm0_default: pwm0_default {
 		group1 {
-			pinmux = <GPIO14_PWM0_CH2P>;	/* buzzer */
+			pinmux = <GPIO14_PWM0_CH2P>, <GPIO28_PWM0_CH0P>;
 			bias-pull-up;
 			input-schmitt-enable;
 			drive-strength = <1>;

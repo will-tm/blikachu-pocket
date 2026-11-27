@@ -8,6 +8,9 @@
  */
 void platform_init(void);
 
+/* PWM0 has a fixed 50 kHz carrier; each channel has its own duty. */
+unsigned int platform_pwm_period(void);
+
 /* Warm reset back into the firmware (fault record in __noinit RAM
  * must survive).
  */

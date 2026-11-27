@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* PCM game audio and independent UI tones on the BL618 buzzer. */
 #include "../emu.h"
+#include "../platform.h"
 #include "psram_buf.h"
 #include <bouffalolab/common/pwm_v2_reg.h>
 #include <zephyr/device.h>
@@ -30,18 +31,24 @@ static void duty(unsigned value)
 
 static void audio_tick(struct k_timer *timer)
 {
-	ARG_UNUSED(timer);
+	bool playing = atomic_get(&active);
+	bool blip = (int32_t)(atomic_get(&tone_until) - k_uptime_get_32()) > 0;
+	if (!playing && !blip) {
+		duty(0);
+		atomic_set(&output_enabled, 0);
+		k_timer_stop(timer);
+		return;
+	}
 	uint32_t rd = atomic_get(&pcm_read);
 	int sample = 128;
-	bool available = rd != (uint32_t)atomic_get(&pcm_write);
+	bool available = playing && rd != (uint32_t)atomic_get(&pcm_write);
 	if (available) {
 		sample = pcm[rd % CAPACITY];
 		atomic_set(&pcm_read, rd + 1);
-	} else {
+	} else if (playing) {
 		underruns++;
 	}
 	int vol = atomic_get(&volume);
-	bool blip = (int32_t)(atomic_get(&tone_until) - k_uptime_get_32()) > 0;
 	if (blip) {
 		tone_phase += atomic_get(&tone_hz);
 		if (tone_phase >= OUTPUT_RATE) tone_phase %= OUTPUT_RATE;
@@ -57,48 +64,32 @@ static void audio_tick(struct k_timer *timer)
 }
 static K_TIMER_DEFINE(pcm_timer, audio_tick, NULL);
 
-static void menu_tone(unsigned hz)
-{
-	if (!device_is_ready(buzzer.dev) || atomic_get(&gated)) return;
-	int vol = atomic_get(&volume);
-	if (!hz || !vol || atomic_get(&muted)) {
-		pwm_rc = pwm_set_dt(&buzzer, 1000000, 0);
-	} else {
-		uint32_t period = 1000000000U / hz;
-		pwm_rc = pwm_set_dt(&buzzer, period, period >> (12 - vol));
-	}
-}
-static void blip_off(struct k_work *work)
-{
-	ARG_UNUSED(work);
-	if (!atomic_get(&active)) menu_tone(0);
-}
-static K_WORK_DELAYABLE_DEFINE(blip_work, blip_off);
-
 static void update_output(void)
 {
-	bool enable = atomic_get(&active) && atomic_get(&volume) && !atomic_get(&muted) && !atomic_get(&gated);
+	unsigned int key = irq_lock();
+	bool blip = (int32_t)(atomic_get(&tone_until) - k_uptime_get_32()) > 0;
+	bool enable = (atomic_get(&active) || blip) && atomic_get(&volume) &&
+		      !atomic_get(&muted) && !atomic_get(&gated);
 	if (!enable) {
 		if (atomic_cas(&output_enabled, 1, 0)) {
 			k_timer_stop(&pcm_timer);
 			duty(0);
 		}
+		irq_unlock(key);
 		return;
 	}
 	if (atomic_get(&output_enabled)) {
+		irq_unlock(key);
 		return;
 	}
-	uint64_t clock;
-	pwm_rc = pwm_get_cycles_per_sec(buzzer.dev, buzzer.channel, &clock);
-	if (!pwm_rc) {
-		pwm_period = (uint32_t)(clock / 50000);
-		pwm_rc = pwm_set_cycles(buzzer.dev, buzzer.channel, pwm_period, 0, buzzer.flags);
-	}
+	pwm_period = platform_pwm_period();
+	pwm_rc = pwm_period ? 0 : -ENODEV;
 	if (!pwm_rc) {
 		atomic_set(&pcm_read, atomic_get(&pcm_write));
 		atomic_set(&output_enabled, 1);
 		k_timer_start(&pcm_timer, K_USEC(100), K_USEC(100));
 	}
+	irq_unlock(key);
 }
 void lr_audio_start(unsigned rate)
 {
@@ -106,16 +97,15 @@ void lr_audio_start(unsigned rate)
 	phase = tone_phase = samples = underruns = 0;
 	atomic_set(&pcm_read, 0); atomic_set(&pcm_write, 0);
 	atomic_set(&paused, 0); atomic_set(&tone_until, 0);
-	(void)k_work_cancel_delayable(&blip_work);
 	atomic_set(&active, 1);
 	update_output();
 }
 void lr_audio_stop(void)
 {
 	atomic_set(&active, 0);
+	atomic_set(&tone_until, 0);
 	update_output();
 	source_rate = 0;
-	menu_tone(0);
 }
 void lr_audio_pause(bool pause)
 {
@@ -165,26 +155,20 @@ void emu_buzzer_volume(int vol)
 {
 	atomic_set(&volume, CLAMP(vol, 0, 11));
 	update_output();
-	if (!vol && !atomic_get(&active)) menu_tone(0);
 }
 int emu_buzzer_volume_get(void) { return atomic_get(&volume); }
 void emu_buzzer_mute(bool mute)
 {
 	atomic_set(&muted, mute);
 	update_output();
-	if (mute && !atomic_get(&active)) menu_tone(0);
 }
 void emu_buzzer_pcm_gate(bool on) { atomic_set(&gated, on); update_output(); }
 void emu_buzzer_blip(uint32_t hz, uint32_t ms)
 {
 	if (atomic_get(&muted) || !atomic_get(&volume)) return;
-	if (atomic_get(&active)) {
-		atomic_set(&tone_hz, hz);
-		atomic_set(&tone_until, k_uptime_get_32() + ms);
-	} else {
-		menu_tone(hz);
-		k_work_reschedule(&blip_work, K_MSEC(ms));
-	}
+	atomic_set(&tone_hz, hz);
+	atomic_set(&tone_until, k_uptime_get_32() + ms);
+	update_output();
 }
 void emu_apu_dump(void (*out)(void *, const char *), void *ctx)
 {
