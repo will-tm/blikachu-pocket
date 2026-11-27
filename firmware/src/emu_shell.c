@@ -1,5 +1,5 @@
 /*
- * Settings (`cfg`) and emulator (`gb`) shell commands.
+ * Settings (`cfg`) and emulator (`emu`) shell commands.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -113,7 +113,7 @@ static int cmd_bright(const struct shell *sh, size_t argc, char **argv)
 SHELL_CMD_ARG_REGISTER(bright, NULL, "[1-10] — LCD backlight brightness", cmd_bright, 1, 1);
 
 /* Inject a synthetic key tap through the input dispatch path (menu /
- * emu handler — unlike `gb btn`, which pokes the emulator joypad word
+ * emu handler — unlike `emu btn`, which pokes the emulator joypad word
  * directly). Debug tool for exercising input handling without hands on
  * the device.
  */
@@ -143,16 +143,16 @@ static int cmd_key(const struct shell *sh, size_t argc, char **argv)
 SHELL_CMD_ARG_REGISTER(key, NULL, "<up|down|left|right|a|b|start|select> — inject key tap",
 		       cmd_key, 2, 0);
 
-/* ---- `gb` subcommand group: emulator lifecycle + control ----
+/* ---- `emu` subcommand group: emulator lifecycle + control ----
  *
- * `gb run <name|path> [frames]` resolves the file, kicks off the emu
+ * `emu run <name|path> [frames]` resolves the file, kicks off the emu
  * worker thread, and returns to the prompt immediately. While running,
  * a shell bypass intercepts q / Ctrl-C / Esc to call emu_quit() even if
- * the parser is otherwise busy. No periodic logs — `gb stats` is the
+ * the parser is otherwise busy. No periodic logs — `emu info` is the
  * way to ask how things are going.
  */
 
-static int cmd_gb_list(const struct shell *sh, size_t argc, char **argv)
+static int cmd_emu_list(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
@@ -172,16 +172,16 @@ int emu_shell_launch(const char *spec)
 	return emu_run(path, 0);
 }
 
-static int cmd_gb_run(const struct shell *sh, size_t argc, char **argv)
+static int cmd_emu_run(const struct shell *sh, size_t argc, char **argv)
 {
 	if (argc < 2) {
-		shell_error(sh, "usage: gb run <name|path> [frames]");
+		shell_error(sh, "usage: emu run <name|path> [frames]");
 		return -EINVAL;
 	}
 	uint32_t frames = (argc >= 3) ? (uint32_t)strtoul(argv[2], NULL, 0) : 0;
 
 	/* If the first arg is a pure decimal integer, treat it as a ROM
-	 * index from `gb list`.
+	 * index from `emu list`.
 	 */
 	const char *spec = argv[1];
 	char resolved[ROM_NAME_MAX];
@@ -207,12 +207,12 @@ static int cmd_gb_run(const struct shell *sh, size_t argc, char **argv)
 		shell_error(sh, "emu_run: %d", rc);
 		return rc;
 	}
-	shell_print(sh, "running %s (%u frames%s) — `gb stop` to kill", path, frames,
+	shell_print(sh, "running %s (%u frames%s) — `emu stop` to kill", path, frames,
 		    frames ? "" : " unlimited");
 	return 0;
 }
 
-static int cmd_gb_stop(const struct shell *sh, size_t argc, char **argv)
+static int cmd_emu_stop(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(sh);
 	ARG_UNUSED(argc);
@@ -224,7 +224,7 @@ static int cmd_gb_stop(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-static int cmd_gb_pause(const struct shell *sh, size_t argc, char **argv)
+static int cmd_emu_pause(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(sh);
 	ARG_UNUSED(argc);
@@ -233,7 +233,7 @@ static int cmd_gb_pause(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-static int cmd_gb_resume(const struct shell *sh, size_t argc, char **argv)
+static int cmd_emu_resume(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(sh);
 	ARG_UNUSED(argc);
@@ -242,7 +242,7 @@ static int cmd_gb_resume(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-static int cmd_gb_reset(const struct shell *sh, size_t argc, char **argv)
+static int cmd_emu_reset(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(sh);
 	ARG_UNUSED(argc);
@@ -252,7 +252,7 @@ static int cmd_gb_reset(const struct shell *sh, size_t argc, char **argv)
 }
 
 
-static int cmd_gb_save(const struct shell *sh, size_t argc, char **argv)
+static int cmd_emu_save(const struct shell *sh, size_t argc, char **argv)
 {
 	const char *path = (argc >= 2) ? argv[1] : NULL;
 	int rc = emu_state_save(path);
@@ -264,7 +264,7 @@ static int cmd_gb_save(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-static int cmd_gb_restore(const struct shell *sh, size_t argc, char **argv)
+static int cmd_emu_restore(const struct shell *sh, size_t argc, char **argv)
 {
 	const char *path = (argc >= 2) ? argv[1] : NULL;
 	int rc = emu_state_restore(path);
@@ -276,7 +276,7 @@ static int cmd_gb_restore(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-static int cmd_gb_apu(const struct shell *sh, size_t argc, char **argv)
+static int cmd_emu_apu(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
@@ -284,12 +284,12 @@ static int cmd_gb_apu(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-static int cmd_gb_mute(const struct shell *sh, size_t argc, char **argv)
+static int cmd_emu_mute(const struct shell *sh, size_t argc, char **argv)
 {
 	bool on = strcmp(argv[1], "on") == 0;
 
 	if (!on && strcmp(argv[1], "off") != 0) {
-		shell_error(sh, "usage: gb mute <on|off>");
+		shell_error(sh, "usage: emu mute <on|off>");
 		return -EINVAL;
 	}
 	emu_buzzer_mute(on);
@@ -297,7 +297,7 @@ static int cmd_gb_mute(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-static int cmd_gb_vol(const struct shell *sh, size_t argc, char **argv)
+static int cmd_emu_vol(const struct shell *sh, size_t argc, char **argv)
 {
 	if (argc < 2) {
 		shell_print(sh, "volume: %d/11", emu_buzzer_volume_get());
@@ -308,7 +308,7 @@ static int cmd_gb_vol(const struct shell *sh, size_t argc, char **argv)
 	long v = strtol(argv[1], &end, 10);
 
 	if (!end || *end || v < 0 || v > 11) {
-		shell_error(sh, "usage: gb vol [0-11]");
+		shell_error(sh, "usage: emu vol [0-11]");
 		return -EINVAL;
 	}
 	emu_buzzer_volume((int)v);
@@ -320,7 +320,7 @@ static int cmd_gb_vol(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-static int cmd_gb_info(const struct shell *sh, size_t argc, char **argv)
+static int cmd_emu_info(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
@@ -367,24 +367,24 @@ SHELL_CMD_ARG_REGISTER(lrdisplay, NULL, "off/on/dma/headless — display diagnos
 static const struct {
 	const char *name;
 	uint8_t mask;
-} gb_btn_table[] = {
+} emu_btn_table[] = {
 	{"a", 0x01},     {"b", 0x02},    {"select", 0x04}, {"start", 0x08},
 	{"right", 0x10}, {"left", 0x20}, {"up", 0x40},     {"down", 0x80},
 };
 
-static uint8_t gb_btn_lookup(const char *name)
+static uint8_t emu_btn_lookup(const char *name)
 {
-	for (size_t i = 0; i < ARRAY_SIZE(gb_btn_table); i++) {
-		if (strcasecmp(name, gb_btn_table[i].name) == 0) {
-			return gb_btn_table[i].mask;
+	for (size_t i = 0; i < ARRAY_SIZE(emu_btn_table); i++) {
+		if (strcasecmp(name, emu_btn_table[i].name) == 0) {
+			return emu_btn_table[i].mask;
 		}
 	}
 	return 0;
 }
 
-static int cmd_gb_btn(const struct shell *sh, size_t argc, char **argv)
+static int cmd_emu_btn(const struct shell *sh, size_t argc, char **argv)
 {
-	uint8_t mask = gb_btn_lookup(argv[1]);
+	uint8_t mask = emu_btn_lookup(argv[1]);
 	if (!mask) {
 		shell_error(sh,
 			    "unknown button '%s' "
@@ -411,21 +411,21 @@ static int cmd_gb_btn(const struct shell *sh, size_t argc, char **argv)
 }
 
 SHELL_STATIC_SUBCMD_SET_CREATE(
-	sub_gb, SHELL_CMD(list, NULL, "list ROMs available on /NAND:", cmd_gb_list),
-	SHELL_CMD_ARG(run, NULL, "<name|path> [frames] — start a ROM", cmd_gb_run, 2, 1),
-	SHELL_CMD(stop, NULL, "stop the running ROM", cmd_gb_stop),
-	SHELL_CMD(pause, NULL, "pause the running ROM", cmd_gb_pause),
-	SHELL_CMD(resume, NULL, "resume after pause", cmd_gb_resume),
-	SHELL_CMD(reset, NULL, "reset CPU/PPU/APU (keep ROM + cart RAM)", cmd_gb_reset),
+	sub_emu, SHELL_CMD(list, NULL, "list ROMs available on /NAND:", cmd_emu_list),
+	SHELL_CMD_ARG(run, NULL, "<name|path> [frames] — start a ROM", cmd_emu_run, 2, 1),
+	SHELL_CMD(stop, NULL, "stop the running ROM", cmd_emu_stop),
+	SHELL_CMD(pause, NULL, "pause the running ROM", cmd_emu_pause),
+	SHELL_CMD(resume, NULL, "resume after pause", cmd_emu_resume),
+	SHELL_CMD(reset, NULL, "reset CPU/PPU/APU (keep ROM + cart RAM)", cmd_emu_reset),
 SHELL_CMD_ARG(btn, NULL, "<a|b|start|select|up|down|left|right> [hold_ms] — tap a button",
-		      cmd_gb_btn, 2, 1),
+		      cmd_emu_btn, 2, 1),
 	SHELL_CMD_ARG(save, NULL, "[path] — full save state (default core/ROM .lrstate)",
-		      cmd_gb_save, 1, 1),
-	SHELL_CMD_ARG(restore, NULL, "[path] — restore full save state", cmd_gb_restore, 1,
+		      cmd_emu_save, 1, 1),
+	SHELL_CMD_ARG(restore, NULL, "[path] — restore full save state", cmd_emu_restore, 1,
 		      1),
-	SHELL_CMD(info, NULL, "running, paused, frame, fps, ...", cmd_gb_info),
-	SHELL_CMD(apu, NULL, "PCM audio diagnostics", cmd_gb_apu),
-	SHELL_CMD_ARG(mute, NULL, "<on|off> — force the buzzer silent", cmd_gb_mute, 2, 0),
-	SHELL_CMD_ARG(vol, NULL, "[0-10] — buzzer volume (PWM duty)", cmd_gb_vol, 1, 1),
+	SHELL_CMD(info, NULL, "running, paused, frame, fps, ...", cmd_emu_info),
+	SHELL_CMD(apu, NULL, "PCM audio diagnostics", cmd_emu_apu),
+	SHELL_CMD_ARG(mute, NULL, "<on|off> — force the buzzer silent", cmd_emu_mute, 2, 0),
+	SHELL_CMD_ARG(vol, NULL, "[0-10] — buzzer volume (PWM duty)", cmd_emu_vol, 1, 1),
 	SHELL_SUBCMD_SET_END);
-SHELL_CMD_REGISTER(gb, &sub_gb, "Game emulator commands", NULL);
+SHELL_CMD_REGISTER(emu, &sub_emu, "Game emulator commands", NULL);

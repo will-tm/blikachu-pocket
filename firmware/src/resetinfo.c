@@ -104,7 +104,7 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 /* Emu-stall watchdog, piggybacked on the feeder's 1 s tick: a running,
  * unpaused game whose frame counter stops advancing is wedged inside
  * retro_run (the stop flag is only checked at frame boundaries, so
- * `gb stop` can't help either). Two stages: after QUIT_S stalled
+ * `emu stop` can't help either). Two stages: after QUIT_S stalled
  * seconds try the polite emu_quit() (recovers a loop that still
  * reaches the boundary eventually); after RESET_S write a fault record
  * (custom reason and frame counter) and reboot.

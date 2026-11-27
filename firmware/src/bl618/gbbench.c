@@ -238,7 +238,7 @@ static int cmd_bench_run(const struct shell *sh, size_t argc, char **argv)
 	}
 
 	if (path != NULL) {
-		/* Same flow as the real firmware's `gb run`: resolve the
+		/* Same flow as the real firmware's `emu run`: resolve the
 		 * FATFS file to its XIP window, defrag + retry if the
 		 * cluster chain isn't contiguous.
 		 */

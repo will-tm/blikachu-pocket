@@ -144,7 +144,7 @@ SHELL_CMD_REGISTER(sleep, NULL, "Deepest sleep (no RAM retention), wake on SELEC
 /* ---- Global button hotkeys ----
  *
  * Observes raw input events independently of whoever owns the input
- * handler (menu or emulator); synthetic `gb btn` presses do NOT pass
+ * handler (menu or emulator); synthetic `emu btn` presses do NOT pass
  * through here (they poke the joypad word directly).
  *
  *  - START held >1.5 s      → deep sleep

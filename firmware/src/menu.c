@@ -225,7 +225,7 @@ static void menu_input_cb(struct input_event *evt)
 
 /* Delegates to emu.c, which owns the buzzer and applies the persisted
  * volume + mute settings (the old local PWM path blasted 50% duty
- * regardless of `gb vol`).
+ * regardless of `emu vol`).
  */
 void buzzer_blip(uint32_t freq, uint32_t ms)
 {

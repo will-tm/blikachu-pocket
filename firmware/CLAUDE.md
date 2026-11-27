@@ -91,11 +91,11 @@ secure boot or A/B rollback.
 
 ## Shell and controls
 
-- `gb list`, `gb run <name|path|index> [frames]`, `gb stop/pause/resume/reset`
-- `gb info`, `gb apu`, `gb btn <button> [hold_ms]`
-- `gb save [path]`, `gb restore [path]`: core/ROM-specific `.lrstate` files
+- `emu list`, `emu run <name|path|index> [frames]`, `emu stop/pause/resume/reset`
+- `emu info`, `emu apu`, `emu btn <button> [hold_ms]`
+- `emu save [path]`, `emu restore [path]`: core/ROM-specific `.lrstate` files
   under `.saves/`; launches cold-boot and restore separate battery/RTC files.
-- `gb vol [0-11]`, `gb mute on/off`, `bright [1-10]`
+- `emu vol [0-11]`, `emu mute on/off`, `bright [1-10]`
 - `cfg list/get/set/del`: `/NAND:/.blikachu.cfg`
 - `mount`, `umount`, `disk`, `romaddr`, `fs ls /NAND:`, `usb`
 - `mkfs` and `wipe` are destructive; ask before using them.
@@ -133,13 +133,13 @@ and workspace acquisition as well as volume mutations.
 
 The libretro frontend selects Gambatte, FCEUmm or Snes9x2005 from the
 ROM header/extension. `lrprobe <path> [frames]` exercises core lifecycle,
-serialization and runtime memory without display output. `gb info` counts
+serialization and runtime memory without display output. `emu info` counts
 emulated and completed-display frames independently.
 The concurrent display schedule uses short cooperative checkpoints at
 core event boundaries while the renderer is waiting for TE or DMA. These
 do not change emulated CPU/APU cycles. The renderer compares native pixels
 to avoid pushing unchanged strips and clips unchanged letterbox rows.
-`gb info` reports completed updates, unchanged frames, strips transferred
+`emu info` reports completed updates, unchanged frames, strips transferred
 and superseded frames. `lrdisplay dma` isolates the core during strip
 transfers; Snes9x can skip rendering after a late frame in either schedule.
 `lcdbench` measures idle DMA; `lrdmaprobe` profiles a gameplay benchmark

@@ -33,7 +33,7 @@ and extension. Only one core is active at a time.
 `lrprobe <path> [frames]` runs a headless core diagnostic, including a
 save-state round trip and heap/stack measurements. `perfclock` reports the configured clock tree and measured CPU frequency.
 The board uses a 480 MHz AU PLL CPU overclock, while BCLK stays at
-80 MHz and the SPI peripheral source stays at 160 MHz. `gb info` reports
+80 MHz and the SPI peripheral source stays at 160 MHz. `emu info` reports
 emulated frames and completed LCD pushes separately, including unchanged
 frames and strips transferred. Core-event checkpoints let concurrent
 SPI DMA make progress without changing emulated cycles. Two uncached WRAM
@@ -132,20 +132,20 @@ USB CDC provides the `blikachu$` shell. UART0/J3 provides logs at
 ```text
 resetinfo
 kernel uptime
-gb list
-gb run <name-or-index>
-gb info
-gb apu
-gb stop
-gb save
-gb restore
+emu list
+emu run <name-or-index>
+emu info
+emu apu
+emu stop
+emu save
+emu restore
 bright 7
-gb vol 6
+emu vol 6
 fs ls /NAND:
 disk
 ```
 
-`gb run` cold-boots a ROM and loads its cartridge battery RAM. Full states
+`emu run` cold-boots a ROM and loads its cartridge battery RAM. Full states
 are restored only on request while a core is loaded. Save data lives under
 `/NAND:/.saves/` in core/ROM-specific `.lrstate`, `.lrsram` and `.lrrtc`
 files. Existing Peanut-GB save states are not modified or imported.
