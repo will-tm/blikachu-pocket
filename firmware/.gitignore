@@ -31,3 +31,6 @@ TODO.md
 
 # Packaged firmware artifacts
 out/
+
+# Local firmware signing key
+.keys/

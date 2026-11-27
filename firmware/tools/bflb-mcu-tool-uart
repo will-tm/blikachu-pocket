@@ -9,10 +9,14 @@ here. Vendor programming failures propagate as a nonzero exit status.
 """
 
 import sys
+import hashlib
+import struct
+from pathlib import Path
 
 from bflb_flash_support import configure_flash
 from libs import bflb_utils
 from bflb_mcu_tool.__main__ import run_main
+from core import bflb_mcu_tool as vendor_tool
 from libs.bflb_eflash_loader import BflbEflashLoader
 
 vendor_flash_get_size = BflbEflashLoader.flash_get_size
@@ -45,6 +49,35 @@ if __name__ == "__main__":
     configure_flash()
     BflbEflashLoader.flash_get_size = staticmethod(flash_get_size)
     BflbEflashLoader.flash_read_jedec_id_process = read_jedec_id
+    if "--raw-factory" in sys.argv:
+        sys.argv.remove("--raw-factory")
+        if "--erase" in sys.argv or "--build" in sys.argv:
+            sys.exit("--raw-factory requires a bounded sector-program operation")
+        original_get_value = vendor_tool.get_value
+        original_create_img = vendor_tool.BflbMcuTool.create_img
+
+        def factory_config(args):
+            data = Path(args.firmware).read_bytes()
+            if args.chipname != "bl616" or int(args.addr, 16) != 0 or len(data) != 0x800000:
+                sys.exit("Invalid factory image range")
+            length = struct.unpack_from("<I", data, 0x84)[0]
+            if (data[:4] != b"BFNP" or not 0 < length <= 0x7d000 or
+                hashlib.sha256(data[0x2000:0x2000 + length]).digest() != data[0x88:0xa8] or
+                data[0x80000:0x80004] != bytes.fromhex("3db8f396")):
+                sys.exit("Invalid factory image header")
+            values = original_get_value(args)
+            values["img_type"] = "RAW"
+            values["img1_addr"] = "0x0"
+            return values
+
+        def factory_create(self, chipname, chiptype, values):
+            if values["img_type"] == "RAW":
+                self.config = values
+                return True
+            return original_create_img(self, chipname, chiptype, values)
+
+        vendor_tool.get_value = factory_config
+        vendor_tool.BflbMcuTool.create_img = factory_create
     run_main()
     if bflb_utils.get_error_code() not in ("FFFF", "0000"):
         sys.exit(1)

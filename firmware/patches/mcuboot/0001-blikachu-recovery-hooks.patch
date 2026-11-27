@@ -1,0 +1,38 @@
+--- a/boot/zephyr/CMakeLists.txt
++++ b/boot/zephyr/CMakeLists.txt
+@@ -17,6 +17,11 @@
+ # http://docs.zephyrproject.org/application/application.html
+ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+ project(MCUboot)
++
++zephyr_get(BLIKACHU_BOOTLOADER_DIR)
++if(DEFINED BLIKACHU_BOOTLOADER_DIR)
++  include(${BLIKACHU_BOOTLOADER_DIR}/CMakeLists.txt)
++endif()
+ 
+ # Path to "boot" subdirectory of repository root.
+ get_filename_component(BOOT_DIR ${APPLICATION_SOURCE_DIR} DIRECTORY)
+--- a/boot/zephyr/main.c
++++ b/boot/zephyr/main.c
+@@ -36,6 +36,9 @@
+ #include "bootutil/mcuboot_status.h"
+ 
+ #include "do_boot.h"
++#ifdef BLIKACHU_RECOVERY
++#include "dfu_request.h"
++#endif
+ 
+ #ifdef MCUBOOT_SERIAL_INACTIVITY_TIMEOUT
+ #include <zephyr/sys/reboot.h>
+@@ -298,7 +301,11 @@
+ 
+ #if defined(CONFIG_BOOT_USB_DFU_GPIO)
+         BOOT_LOG_DBG("Checking GPIO for USB DFU request");
++#ifdef BLIKACHU_RECOVERY
++        if (blikachu_dfu_requested() || io_detect_pin()) {
++#else
+         if (io_detect_pin()) {
++#endif
+             BOOT_LOG_DBG("Entering USB DFU");
+ 
+             usb_dfu_requested = true;

@@ -1,8 +1,8 @@
 /*
  * USB DFU firmware update (dfu-util) for the BL618 boards.
  *
- * Payload: build/zephyr/zephyr.dfu.bin (whole-flash image, see
- * fw_install.h). DNLOAD blocks are staged in RAM (dfu_staging_buf(),
+ * Payload: a signed MCUboot application or a legacy whole-flash image
+ * (see fw_install.h). DNLOAD blocks are staged in RAM (dfu_staging_buf(),
  * provided by the app) — flash is untouched until the final zero-length
  * DNLOAD has passed fw_image_check(); a bad image fails the transfer.
  * After the host's last status poll (dfuMANIFEST-WAIT-RESET) the image
@@ -75,7 +75,7 @@ static int dfu_write_locked(void *const priv, const uint32_t block, const uint16
 			staging_release();
 			return -EINVAL;
 		}
-		LOG_INF("image OK: %u bytes, SHA-256 matches", (unsigned int)g_len);
+		LOG_INF("image accepted: %u bytes", (unsigned int)g_len);
 		return 0;
 	}
 	/* The host picks the block size (dfu-util -t); all but the last

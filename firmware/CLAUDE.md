@@ -25,6 +25,16 @@ Default board is BL618. `flash` uses USB DFU if available. The payload is
 `tools/bflb_whole_img.py`). Keep power connected until installation and the
 subsequent reboot complete. Download completion is NOT installation completion.
 
+The opt-in `./build.sh mcuboot` build uses sysbuild and generates
+`build/factory.bin`, `build/firmware.uf2`, and the signed application at
+`build/firmware/zephyr/zephyr.signed.bin`. Only the factory image requires
+BootROM ISP (`FLASH_PORT=... ./build.sh mcuboot flash`). Its first 8 MiB
+contains the BFNP header, MCUboot, a one-shot DFU request sector, and two
+application slots. LittleFS and raw ROM offsets are unchanged. The local
+signing key is `.keys/mcuboot.pem`; never commit it. The application `dfu`
+command and SELECT on boot enter the virtual UF2 drive. The drive must never
+expose the real storage partition.
+
 ```bash
 dfu-util -d 2e8a:000a -D build/zephyr/zephyr.dfu.bin
 ```

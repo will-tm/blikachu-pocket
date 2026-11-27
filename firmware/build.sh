@@ -7,17 +7,22 @@
 #
 # Options:
 #   clean/pristine  - Clean build
+#   mcuboot         - Build signed app, UF2 and ISP factory image
 #   flash           - Update over USB DFU; FLASH_PORT selects BootROM ISP
 
 set -e
 
 PRISTINE=""
 DO_FLASH=""
+MCUBOOT=""
 
 for arg in "$@"; do
     case "$arg" in
         pristine|clean)
             PRISTINE="--pristine"
+            ;;
+        mcuboot)
+            MCUBOOT="1"
             ;;
         flash)
             DO_FLASH="1"
@@ -100,6 +105,18 @@ if [ -d patches ] && [ -d deps/zephyr/.git ]; then
         else
             echo "ERROR: $p does not apply cleanly to deps/zephyr"
             exit 1
+        fi
+    done
+fi
+
+# === MCUboot integration ===
+if [ -n "$MCUBOOT" ]; then
+    if [ ! -d deps/bootloader/mcuboot/.git ]; then
+        west update --narrow mcuboot
+    fi
+    for p in patches/mcuboot/*.patch; do
+        if ! git -C deps/bootloader/mcuboot apply --reverse --check "$SCRIPT_DIR/$p" 2>/dev/null; then
+            git -C deps/bootloader/mcuboot apply "$SCRIPT_DIR/$p"
         fi
     done
 fi
@@ -224,14 +241,36 @@ if [ -n "$ZEPHYR_SDK_INSTALL_DIR" ]; then
     WEST_EXTRA_CMAKE+=(-DZEPHYR_SDK_INSTALL_DIR="$ZEPHYR_SDK_INSTALL_DIR")
 fi
 
-west build -b "${BOARD}" -d build "${SCRIPT_DIR}" ${PRISTINE} --no-sysbuild \
-    -- "${WEST_EXTRA_CMAKE[@]}"
+if [ -n "$MCUBOOT" ]; then
+    mkdir -p .keys
+    if [ ! -f .keys/mcuboot.pem ]; then
+        (umask 077; python deps/bootloader/mcuboot/scripts/imgtool.py keygen -k .keys/mcuboot.pem -t ecdsa-p256)
+    fi
+    [ -f build/domains.yaml ] || PRISTINE="--pristine=always"
+    west build -b "${BOARD}" -d build "${SCRIPT_DIR}" ${PRISTINE} --sysbuild \
+        -- -DBOARD_ROOT="$SCRIPT_DIR" "-DSB_CONFIG_BOOT_SIGNATURE_KEY_FILE=\"$SCRIPT_DIR/.keys/mcuboot.pem\"" "${WEST_EXTRA_CMAKE[@]}"
+else
+    [ ! -f build/domains.yaml ] || PRISTINE="--pristine=always"
+    west build -b "${BOARD}" -d build "${SCRIPT_DIR}" ${PRISTINE} --no-sysbuild \
+        -- "${WEST_EXTRA_CMAKE[@]}"
+fi
 
 echo "========================================"
 echo "Build complete!"
 echo "========================================"
 
 # === Flash ===
+if [ -n "$MCUBOOT" ]; then
+    python tools/mcuboot_artifacts.py
+    if [ -n "$DO_FLASH" ]; then
+        if [ -z "${FLASH_PORT:-}" ]; then
+            echo "ERROR: factory installation requires BootROM ISP (set FLASH_PORT)."
+            exit 1
+        fi
+        bflb-mcu-tool-uart --raw-factory --chipname bl616 --port "$FLASH_PORT" --baudrate 2000000 --addr 0x0 --firmware "$SCRIPT_DIR/build/factory.bin"
+    fi
+    exit 0
+fi
 if [ -n "$DO_FLASH" ]; then
     echo ""
     echo "Flashing..."

@@ -1,0 +1,5 @@
+if(SB_CONFIG_BOOTLOADER_MCUBOOT)
+  set(${DEFAULT_IMAGE}_EXTRA_DTC_OVERLAY_FILE ${APP_DIR}/bootloader/app.overlay CACHE INTERNAL "MCUboot application layout")
+  set(${DEFAULT_IMAGE}_EXTRA_CONF_FILE ${APP_DIR}/bootloader/app.conf CACHE INTERNAL "MCUboot application config")
+  set(mcuboot_BLIKACHU_BOOTLOADER_DIR ${APP_DIR}/bootloader CACHE INTERNAL "BLikachu recovery sources")
+endif()

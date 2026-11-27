@@ -53,9 +53,14 @@ if(CONFIG_HTTP_SERVER)
     # (src/ota.c) and the in-place installer.
     target_sources(app PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ota.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/bl618/fw_install.c
         ${CMAKE_CURRENT_SOURCE_DIR}/src/libretro/workspace.c
     )
+    if(CONFIG_BOOTLOADER_MCUBOOT)
+        target_sources(app PRIVATE src/bl618/fw_install_mcuboot.c src/bl618/dfu_shell.c bootloader/dfu_request.c)
+        target_include_directories(app PRIVATE bootloader)
+    else()
+        target_sources(app PRIVATE src/bl618/fw_install.c)
+    endif()
     target_sources_ifdef(CONFIG_USBD_DFU app PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/bl618/usb_dfu.c)
 endif()
@@ -80,6 +85,7 @@ target_sources(app PRIVATE
 )
 # DFU / OTA payload: the whole-flash image (BFNP boot header + app)
 # the BootROM boots, generated offline by bflb-mcu-tool.
+if(NOT CONFIG_BOOTLOADER_MCUBOOT)
 set(DFU_BIN ${CMAKE_BINARY_DIR}/zephyr/zephyr.dfu.bin)
 add_custom_command(
     OUTPUT ${DFU_BIN}
@@ -92,6 +98,7 @@ add_custom_command(
 )
 add_custom_target(dfu_image ALL DEPENDS ${DFU_BIN})
 add_dependencies(dfu_image zephyr_final)
+endif()
 
 target_include_directories(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include

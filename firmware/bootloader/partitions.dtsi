@@ -1,0 +1,28 @@
+/* Preserve LittleFS and raw ROM offsets in both images. */
+/delete-node/ &code_partition;
+
+&w25q512jv {
+	partitions {
+		boot_partition: partition@2000 {
+			compatible = "zephyr,mapped-partition";
+			label = "mcuboot";
+			reg = <0x2000 0x7d000>;
+			read-only;
+		};
+		dfu_request_partition: partition@7f000 {
+			compatible = "zephyr,mapped-partition";
+			label = "dfu-request";
+			reg = <0x7f000 0x1000>;
+		};
+		slot0_partition: partition@80000 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-0";
+			reg = <0x80000 0x3bf000>;
+		};
+		slot1_partition: partition@43f000 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-1";
+			reg = <0x43f000 0x3c0000>;
+		};
+	};
+};

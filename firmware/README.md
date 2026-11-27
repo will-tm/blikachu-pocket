@@ -65,6 +65,37 @@ The DFU/upload payload limit is 3.5 MiB.
 
 ## Firmware updates
 
+### MCUboot / UF2 (experimental)
+
+Build the two-slot firmware and recovery bootloader with:
+
+```bash
+./build.sh mcuboot
+```
+
+The build produces `build/factory.bin` (one-time ISP installation),
+`build/firmware.uf2` (drag-and-drop update), and
+`build/firmware/zephyr/zephyr.signed.bin` (application DFU and WiFi OTA).
+The locally generated `.keys/mcuboot.pem` signs the application; keep a
+backup of it to build future updates for this bootloader.
+
+For initial installation, enter BootROM ISP and run:
+
+```bash
+FLASH_PORT=/dev/cu.usbmodemXXXXX ./build.sh mcuboot flash
+```
+
+The factory image spans only the first 8 MiB of flash. The 8 MiB LittleFS
+and 48 MiB ROM partitions retain their offsets. Hold SELECT while booting,
+or issue `dfu` in the application shell, to open the `BLIKACHU` UF2 drive.
+Copy `build/firmware.uf2` to the drive and keep power connected until the
+bootloader completes the update. MCUboot validates and swaps the signed
+candidate from the secondary slot; the application confirms after startup.
+For a USB DFU transfer directly to the running application, use
+`dfu-util -d 2e8a:000a -D build/firmware/zephyr/zephyr.signed.bin`.
+
+### Legacy firmware (without MCUboot)
+
 ```bash
 ./build.sh flash
 ```

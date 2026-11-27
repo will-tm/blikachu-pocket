@@ -1,11 +1,11 @@
 /*
- * BL61x firmware image check + in-place install (shared by USB DFU and
- * WiFi OTA).
+ * BL61x firmware image check and install (shared by USB DFU and WiFi OTA).
  *
  * Image format: the whole-flash image the BootROM boots from offset 0
  * (build/zephyr/zephyr.dfu.bin, tools/bflb_whole_img.py): an 8 KiB BFNP
  * boot header holding the app length (+0x84) and its SHA-256 (+0x88),
- * followed by the app.
+ * followed by the app. MCUboot builds accept a signed application image
+ * and stage it in the secondary slot instead.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -18,8 +18,9 @@
 #include <zephyr/toolchain.h>
 
 /**
- * Validate a staged whole-flash image: BFNP magic/header CRC, app length, app
- * SHA-256 against the header (the check the BootROM applies).
+ * Validate a staged image's format and bounds. The legacy format also
+ * checks the BFNP header CRC and SHA-256; MCUboot authenticates the
+ * signed candidate before swapping slots.
  *
  * @param img Staged image.
  * @param len In: bytes staged. Out: header + app length (trailing
@@ -30,10 +31,9 @@
 int fw_image_check(const uint8_t *img, size_t *len);
 
 /**
- * Rewrite flash from offset 0 with a checked image, verify it and reset.
- * Runs from RAM with IRQs locked; the watchdog is stopped first and
- * fw_install_prepare() runs before anything is touched. Never returns;
- * a verify mismatch spins with "!V" on UART0 (recover via BootROM ISP).
+ * Install a checked image and reset. Legacy firmware rewrites from
+ * offset zero in RAM with IRQs locked; MCUboot firmware writes only the
+ * secondary slot and requests a test upgrade. Never returns.
  */
 FUNC_NORETURN void fw_install(const uint8_t *img, size_t len);
 

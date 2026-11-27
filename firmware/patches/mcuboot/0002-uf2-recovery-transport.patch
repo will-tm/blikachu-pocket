@@ -1,0 +1,79 @@
+--- a/boot/zephyr/usbd_dfu.c
++++ b/boot/zephyr/usbd_dfu.c
+@@ -12,6 +12,13 @@
+ #include "bootutil/bootutil_log.h"
+ #include "bootutil/bootutil_public.h"
+ #include "usbd_dfu.h"
++#ifdef BLIKACHU_RECOVERY
++#include <zephyr/sys/reboot.h>
++#include "uf2_disk.h"
++#define RECOVERY_CLASS "msc_0"
++#else
++#define RECOVERY_CLASS "dfu_dfu"
++#endif
+ 
+ BOOT_LOG_MODULE_DECLARE(mcuboot);
+ 
+@@ -47,6 +54,12 @@
+ K_SEM_DEFINE(boot_dfu_complete, 0, 1);
+ 
+ static bool boot_dfu_initialized;
++#ifdef BLIKACHU_RECOVERY
++void blikachu_uf2_complete(void)
++{
++    k_sem_give(&boot_dfu_complete);
++}
++#endif
+ 
+ static void boot_dfu_msg_cb(struct usbd_context *const ctx,
+ 			    const struct usbd_msg *const msg)
+@@ -69,7 +82,7 @@
+ 		return err;
+ 	}
+ 
+-	err = usbd_register_class(&boot_dfu_usbd, "dfu_dfu", USBD_SPEED_FS, 1);
++	err = usbd_register_class(&boot_dfu_usbd, RECOVERY_CLASS, USBD_SPEED_FS, 1);
+ 	if (err) {
+ 		BOOT_LOG_ERR("Failed to register DFU class (FS): %d", err);
+ 		return err;
+@@ -95,7 +108,7 @@
+ 		return err;
+ 	}
+ 
+-	err = usbd_register_class(&boot_dfu_usbd, "dfu_dfu", USBD_SPEED_HS, 1);
++	err = usbd_register_class(&boot_dfu_usbd, RECOVERY_CLASS, USBD_SPEED_HS, 1);
+ 	if (err) {
+ 		BOOT_LOG_ERR("Failed to register DFU class (HS): %d", err);
+ 		return err;
+@@ -113,6 +126,12 @@
+ static int boot_dfu_init(void)
+ {
+ 	int err;
++#ifdef BLIKACHU_RECOVERY
++	err = blikachu_uf2_init();
++	if (err) {
++		return err;
++	}
++#endif
+ 
+ 	err = usbd_add_descriptor(&boot_dfu_usbd, &boot_dfu_lang);
+ 	if (err) {
+@@ -204,6 +223,9 @@
+ 	}
+ 
+ 	BOOT_LOG_INF("USB DFU completed");
++#ifdef BLIKACHU_RECOVERY
++	(void)usbd_disable(&boot_dfu_usbd);
++#endif
+ 
+ #if !defined(CONFIG_SINGLE_APPLICATION_SLOT)
+ 	/* The DFU backend only writes the image into the secondary slot. Unless
+@@ -214,4 +236,7 @@
+ 		BOOT_LOG_ERR("Failed to request upgrade to the downloaded image");
+ 	}
+ #endif
+-}
++#ifdef BLIKACHU_RECOVERY
++	sys_reboot(SYS_REBOOT_COLD);
++#endif
++}

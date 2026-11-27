@@ -19,6 +19,9 @@
 
 
 #include "bootanim.h"
+#ifdef CONFIG_BOOTLOADER_MCUBOOT
+#include <zephyr/dfu/mcuboot.h>
+#endif
 #include "charger.h"
 #include "emu.h"
 #include <libretro.h>
@@ -435,10 +438,16 @@ int main(void)
 	 * (rc gets logged; root cause still open) — retry with backoff
 	 * instead of silently booting without storage.
 	 */
+#ifdef CONFIG_BOOTLOADER_MCUBOOT
+	bool mounted = false;
+#endif
 	for (int attempt = 1; attempt <= 4; attempt++) {
 		int mrc = storage_mount();
 
 		if (mrc == 0) {
+#ifdef CONFIG_BOOTLOADER_MCUBOOT
+			mounted = true;
+#endif
 			break;
 		}
 		LOG_WRN("boot mount attempt %d failed: %d", attempt, mrc);
@@ -454,10 +463,19 @@ int main(void)
 	/* Light the panel at the persisted brightness, roll the boot
 	 * animation once (any button skips), then hand over to the menu.
 	 */
-	(void)gfx_init();
+	int display_rc = gfx_init();
+	(void)display_rc;
 	(void)gfx_backlight_set(settings_get_int("bright", GFX_BRIGHT_DEFAULT));
 	boot_anim_play();
 	menu_start();
+#ifdef CONFIG_BOOTLOADER_MCUBOOT
+	if (mounted && !display_rc && !boot_is_img_confirmed()) {
+		int rc = boot_write_img_confirmed();
+		if (rc) {
+			LOG_ERR("MCUboot confirmation failed: %d", rc);
+		}
+	}
+#endif
 
 	while (!dtr) {
 		uart_line_ctrl_get(console, UART_LINE_CTRL_DTR, &dtr);
