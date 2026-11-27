@@ -4002,7 +4002,7 @@
 				)
 			)
 		)
-		(property "Value" "W25Q128JVS"
+		(property "Value" "W25Q512JV"
 			(at 0 4.05 0)
 			(layer "F.Fab")
 			(uuid "19b0f1f6-c21a-4832-af05-8ea0bf6d790c")
@@ -4013,7 +4013,7 @@
 				)
 			)
 		)
-		(property "Datasheet" "http://www.winbond.com/resource-files/w25q128jv_dtr%20revc%2003272018%20plus.pdf"
+		(property "Datasheet" "https://www.winbond.com/hq/support/documentation/?__locale=en&line=/product/code-storage-flash/index.html&family=/product/code-storage-flash/qspi-nor/index.html&category=/.categories/resources/datasheet/&pno=W25Q512JV"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -4024,7 +4024,7 @@
 				)
 			)
 		)
-		(property "Description" ""
+		(property "Description" "512 Mbit (64 MiB), 2.7-3.6 V Quad SPI NOR Flash"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
