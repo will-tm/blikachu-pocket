@@ -46,6 +46,7 @@ target_sources(app PRIVATE
 )
 target_sources_ifdef(CONFIG_WIFI app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/wifi_prov.c)
 target_sources_ifdef(CONFIG_HTTP_SERVER app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/webui.c)
+target_sources_ifdef(CONFIG_LSM6DSV16X app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/imu_shell.c)
 if(CONFIG_HTTP_SERVER)
     # Firmware update: WiFi OTA + USB DFU share the PSRAM staging buffer
     # (src/ota.c) and the in-place installer.

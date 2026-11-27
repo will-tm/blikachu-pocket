@@ -21,6 +21,7 @@
 #include "input.h"
 #include "gfx.h"
 #include "storage.h"
+#include "psram_buf.h"
 
 LOG_MODULE_REGISTER(menu, LOG_LEVEL_INF);
 
@@ -38,7 +39,7 @@ struct rom_entry {
 	size_t size;
 };
 
-static struct rom_entry g_roms[MAX_ROMS];
+static BLIKACHU_BIGBUF struct rom_entry g_roms[MAX_ROMS];
 static int g_rom_count;
 static int g_selected;
 static int g_top;

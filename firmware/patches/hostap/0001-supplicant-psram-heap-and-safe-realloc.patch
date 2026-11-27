@@ -1,0 +1,77 @@
+diff --git a/src/utils/os_zephyr.c b/src/utils/os_zephyr.c
+index 198dbaded..4c7efb9b9 100644
+--- a/src/utils/os_zephyr.c
++++ b/src/utils/os_zephyr.c
+@@ -7,6 +7,7 @@
+ 
+ #include <time.h>
+ 
++#include <zephyr/init.h>
+ #include <zephyr/posix/sys/time.h>
+ #include <zephyr/random/random.h>
+ 
+@@ -14,7 +15,22 @@
+ #include "os.h"
+ 
+ #if !defined(CONFIG_WIFI_NM_WPA_SUPPLICANT_GLOBAL_HEAP)
++#if defined(CONFIG_BOARD_BLIKACHU_POCKET)
++static uint8_t supplicant_heap_buf[CONFIG_WIFI_NM_WPA_SUPPLICANT_HEAP]
++	__aligned(8) __attribute__((section("PSRAM")));
++static struct k_heap wifi_nm_wpa_supplicant_mem_pool;
++
++static int supplicant_heap_init(void)
++{
++	/* The BL618 PSRAM controller initializes at POST_KERNEL priority 0. */
++	k_heap_init(&wifi_nm_wpa_supplicant_mem_pool, supplicant_heap_buf,
++		    sizeof(supplicant_heap_buf));
++	return 0;
++}
++SYS_INIT(supplicant_heap_init, POST_KERNEL, 1);
++#else
+ K_HEAP_DEFINE(wifi_nm_wpa_supplicant_mem_pool, CONFIG_WIFI_NM_WPA_SUPPLICANT_HEAP);
++#endif
+ #endif /* CONFIG_WIFI_NM_WPA_SUPPLICANT_GLOBAL_HEAP */
+ 
+ void os_sleep(os_time_t sec, os_time_t usec)
+@@ -222,7 +238,7 @@ void *os_malloc(size_t size)
+ #if defined(CONFIG_WIFI_NM_WPA_SUPPLICANT_GLOBAL_HEAP)
+ 	return k_malloc(size);
+ #else
+-	return sys_heap_noalign_alloc(&wifi_nm_wpa_supplicant_mem_pool.heap, 0, size);
++	return k_heap_alloc(&wifi_nm_wpa_supplicant_mem_pool, size, K_NO_WAIT);
+ #endif /* CONFIG_WIFI_NM_WPA_SUPPLICANT_GLOBAL_HEAP */
+ }
+ 
+@@ -239,27 +255,11 @@ void os_free(void *ptr)
+ 
+ void *os_realloc(void *ptr, size_t newsize)
+ {
+-	void *p;
+-
+-	if (newsize == 0) {
+-		os_free(ptr);
+-		return NULL;
+-	}
+-
+-	if (ptr == NULL) {
+-		return os_malloc(newsize);
+-	}
+-
+-	p = os_zalloc(newsize);
+-
+-	if (p) {
+-		if (ptr != NULL) {
+-			memcpy(p, ptr, newsize);
+-			os_free(ptr);
+-		}
+-	}
+-
+-	return p;
++#if defined(CONFIG_WIFI_NM_WPA_SUPPLICANT_GLOBAL_HEAP)
++	return k_realloc(ptr, newsize);
++#else
++	return k_heap_realloc(&wifi_nm_wpa_supplicant_mem_pool, ptr, newsize, K_NO_WAIT);
++#endif
+ }
+ 
+ void *os_zalloc(size_t size)

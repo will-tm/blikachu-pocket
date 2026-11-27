@@ -202,6 +202,7 @@ static void try_next_slot(void)
 			.channel = WIFI_CHANNEL_ANY,
 			.band = WIFI_FREQ_BAND_UNKNOWN,
 			.mfp = WIFI_MFP_OPTIONAL,
+			.timeout = 20,
 		};
 
 		LOG_INF("wifi: trying slot %d \"%s\"", g_slot, ssid);
@@ -300,9 +301,19 @@ static int wifi_prov_init(void)
 }
 SYS_INIT(wifi_prov_init, APPLICATION, 95);
 
+static int cmd_wifi_connect(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	k_work_reschedule(&g_connect_work, K_NO_WAIT);
+	shell_print(sh, "retrying stored Wi-Fi networks");
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_wifi_cred,
 	SHELL_CMD_ARG(add, NULL, "<ssid> <passphrase> — derive+store PSK", cmd_wifi_add, 3, 0),
 	SHELL_CMD(list, NULL, "list stored networks", cmd_wifi_list),
+	SHELL_CMD(connect, NULL, "Retry stored Wi-Fi networks now", cmd_wifi_connect),
 	SHELL_CMD_ARG(del, NULL, "<slot> — delete stored network", cmd_wifi_del, 2, 0),
 	SHELL_SUBCMD_SET_END);
 SHELL_CMD_REGISTER(wifi_cred, &sub_wifi_cred,

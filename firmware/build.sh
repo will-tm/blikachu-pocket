@@ -68,8 +68,16 @@ fi
 # === Setup: Download Zephyr if needed ===
 if [ ! -f "deps/zephyr/west.yml" ]; then
     echo "Downloading Zephyr (this takes a while)..."
-    west config manifest.project-filter -- "-hal_.*,-nrf_hw_models,+hal_bouffalolab"
+    west config manifest.project-filter -- "-hal_.*,-nrf_hw_models,+hal_bouffalolab,+hal_st"
     west update
+fi
+
+# The LSM6DSV16X driver uses the ST MEMS HAL.
+if [ "$(west list -f '{active}' hal_st)" = "inactive" ]; then
+    west config manifest.project-filter -- "$(west config manifest.project-filter),+hal_st"
+fi
+if [ ! -d "deps/modules/hal/st/.git" ]; then
+    west update --narrow hal_st
 fi
 
 # === Pinned emulator dependencies ===
@@ -95,6 +103,20 @@ if [ -d patches ] && [ -d deps/zephyr/.git ]; then
         fi
     done
 fi
+
+# === Hostap patches ===
+for p in patches/hostap/*.patch; do
+    [ -f "$p" ] || continue
+    if git -C deps/modules/lib/hostap apply --reverse --check "$SCRIPT_DIR/$p" 2>/dev/null; then
+        : # already applied
+    elif git -C deps/modules/lib/hostap apply --check "$SCRIPT_DIR/$p" 2>/dev/null; then
+        echo "Applying patch: $p"
+        git -C deps/modules/lib/hostap apply "$SCRIPT_DIR/$p"
+    else
+        echo "ERROR: $p does not apply cleanly to deps/modules/lib/hostap"
+        exit 1
+    fi
+done
 
 # === Project-owned libretro patches ===
 for core in common gambatte fceumm snes9x2005; do

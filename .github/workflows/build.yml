@@ -78,7 +78,7 @@ jobs:
           key: ccache-bl618-${{ github.run_id }}
           restore-keys: ccache-bl618-
 
-      - name: Bootstrap west workspace (only hal_bouffalolab, shallow)
+      - name: Bootstrap west workspace (Bouffalo and ST HALs, shallow)
         working-directory: firmware
         run: |
           python3 -m venv .venv
@@ -86,9 +86,9 @@ jobs:
           pip install -r requirements.txt requests jsonschema  # west blobs fetch deps
           mkdir -p .west
           printf '[manifest]\npath = .\nfile = west.yml\n\n[zephyr]\nbase = deps/zephyr\n' > .west/config
-          # Fetch only this board's HAL; drop every other vendor HAL. Also drop
+          # Fetch only the board and IMU HALs; drop every other vendor HAL. Also drop
           # nrf_hw_models (a bsim model that depends on the filtered hal_nordic).
-          west config manifest.project-filter -- "-hal_.*,-nrf_hw_models,+hal_bouffalolab"
+          west config manifest.project-filter -- "-hal_.*,-nrf_hw_models,+hal_bouffalolab,+hal_st"
           west update --narrow -o=--depth=1
 
       - name: Build bl618

@@ -122,6 +122,7 @@ and WiFi OTA. Provision a network through the shell:
 ```text
 wifi_cred add <ssid> <passphrase>
 wifi_cred list
+wifi_cred connect
 ```
 
 ## Shell
@@ -132,6 +133,7 @@ USB CDC provides the `blikachu$` shell. UART0/J3 provides logs at
 ```text
 resetinfo
 kernel uptime
+imu
 emu list
 emu run <name-or-index>
 emu info

@@ -3,8 +3,8 @@
  * loaded by a charge-LED through 1K — the released level floats near
  * the LED threshold, so internal pull-ups make the high solid.
  *
- * IRQ on both edges of all three lines logs decoded state changes;
- * the `charger` shell command prints the state + a live VBAT sample.
+ * The charger status inputs are polled; the `charger` shell command
+ * prints the state + a live VBAT sample.
  */
 
 #include <zephyr/device.h>
@@ -54,15 +54,6 @@ static void chg_log_state(void)
 	LOG_INF("charger: PG=%d STAT1=%d STAT2=%d — %s", p, s1, s2, charger_decode(s1, s2, p));
 }
 
-static void chg_irq_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
-{
-	ARG_UNUSED(dev);
-	ARG_UNUSED(cb);
-	ARG_UNUSED(pins);
-	chg_log_state();
-}
-static struct gpio_callback g_chg_cb;
-
 static int cmd_charger(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
@@ -97,12 +88,8 @@ static int charger_init(void)
 			return 0;
 		}
 		(void)gpio_pin_configure_dt(specs[i], GPIO_INPUT | GPIO_PULL_UP);
-		(void)gpio_pin_interrupt_configure_dt(specs[i], GPIO_INT_EDGE_BOTH);
+		(void)gpio_pin_interrupt_configure_dt(specs[i], GPIO_INT_DISABLE);
 	}
-
-	gpio_init_callback(&g_chg_cb, chg_irq_cb,
-			   BIT(stat1.pin) | BIT(stat2.pin) | BIT(pg.pin));
-	(void)gpio_add_callback(stat1.port, &g_chg_cb);
 
 	chg_log_state(); /* baseline in the boot log */
 	return 0;

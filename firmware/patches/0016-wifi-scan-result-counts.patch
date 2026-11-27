@@ -1,0 +1,35 @@
+diff --git a/drivers/wifi/bflb/wifi6/bflb_wifi_scan.c b/drivers/wifi/bflb/wifi6/bflb_wifi_scan.c
+index c997b7a57fa..b316a9ec15b 100644
+--- a/drivers/wifi/bflb/wifi6/bflb_wifi_scan.c
++++ b/drivers/wifi/bflb/wifi6/bflb_wifi_scan.c
+@@ -373,6 +373,7 @@ void bflb_wifi_deliver_scan_results(struct bflb_wifi_dev *wdev)
+ {
+ 	struct wl80211_scan_result_item *n;
+ 	scan_result_cb_t cb;
++	unsigned int count = 0;
+ 
+ 	k_mutex_lock(&wdev->lock, K_FOREVER);
+ 	cb = wdev->scan_cb;
+@@ -388,8 +389,10 @@ void bflb_wifi_deliver_scan_results(struct bflb_wifi_dev *wdev)
+ 
+ 		fill_scan_result(&result, n);
+ 		cb(wdev->iface, 0, &result);
++		count++;
+ 	}
+ 
++	LOG_INF("scan: %u BSS results reported to net_mgmt", count);
+ 	cb(wdev->iface, 0, NULL);
+ 
+ 	k_mutex_lock(&wdev->lock, K_FOREVER);
+diff --git a/drivers/wifi/bflb/wifi6/bflb_wifi_wpa_supp.c b/drivers/wifi/bflb/wifi6/bflb_wifi_wpa_supp.c
+index bb8fcea6c16..c36f8350234 100644
+--- a/drivers/wifi/bflb/wifi6/bflb_wifi_wpa_supp.c
++++ b/drivers/wifi/bflb/wifi6/bflb_wifi_wpa_supp.c
+@@ -737,6 +737,7 @@ static int bflb_wpa_supp_get_scan_results(void *if_priv)
+ 		count++;
+ 	}
+ 
++	LOG_INF("scan: %d BSS results reported to supplicant", count);
+ 	if (count == 0 && ctx->supp_cb.scan_done != NULL) {
+ 		union wpa_event_data event;
+ 
