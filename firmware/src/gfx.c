@@ -347,7 +347,7 @@ void gfx_draw_text_box(int x, int y, int w, const char *s, unsigned offset_px,
 			unsigned px = offset_px + col;
 			unsigned idx = px / GFX_LARGE_FONT_W;
 			uint8_t ch = idx < len ? (uint8_t)s[idx] : ' ';
-			uint8_t bits = font8x8_basic[ch < 128 ? ch : '?'][row / 2];
+			uint8_t bits = font8x8_basic[ch < 128 ? ch : '?'][row * 8 / GFX_LARGE_FONT_H];
 			unsigned bit = (px % GFX_LARGE_FONT_W) * 8 / GFX_LARGE_FONT_W;
 
 			g_blit_buf[row * w + col] = bits & BIT(bit) ? fg : bg;

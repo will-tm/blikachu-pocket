@@ -76,9 +76,9 @@ void gfx_draw_char(int x, int y, char c, uint16_t fg, uint16_t bg);
  */
 void gfx_draw_text(int x, int y, const char *s, uint16_t fg, uint16_t bg);
 
-/* Draw a clipped 12x16 text viewport, with a horizontal pixel offset. */
-#define GFX_LARGE_FONT_W 12
-#define GFX_LARGE_FONT_H 16
+/* Draw a clipped 10x12 text viewport, with a horizontal pixel offset. */
+#define GFX_LARGE_FONT_W 10
+#define GFX_LARGE_FONT_H 12
 void gfx_draw_text_box(int x, int y, int w, const char *s, unsigned offset_px,
 		       uint16_t fg, uint16_t bg);
 

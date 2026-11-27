@@ -18,7 +18,6 @@
 #include <zephyr/net/net_if.h>
 
 #include "battery.h"
-#include "charger.h"
 #include "menu.h"
 #include "emu.h"
 #include "hud.h"
@@ -34,12 +33,14 @@ LOG_MODULE_REGISTER(menu, LOG_LEVEL_INF);
 
 #define MAX_ROMS      64
 /* ROM_NAME_MAX is exposed in menu.h so the shell can reuse it. */
-#define LINE_HEIGHT   26
-#define HEADER_HEIGHT 40
+#define LINE_HEIGHT   21
+#define HEADER_HEIGHT 28
 #define FOOTER_HEIGHT 20
 #define VISIBLE_LINES ((LCD_HEIGHT - HEADER_HEIGHT - FOOTER_HEIGHT) / LINE_HEIGHT)
 #define NAME_X        24
 #define NAME_W        (LCD_WIDTH - NAME_X - 8)
+#define NAME_Y_OFFSET ((LINE_HEIGHT - GFX_LARGE_FONT_H) / 2)
+#define STATUS_MS     500
 #define SCROLL_MS     50
 #define SCROLL_STEP   2
 #define SCROLL_HOLD   800
@@ -62,7 +63,7 @@ static int64_t g_scroll_epoch;
 static int64_t g_status_time;
 static int g_status_pct;
 static bool g_status_wifi;
-static bool g_status_power;
+static uint16_t g_status_battery_ink;
 
 static struct k_thread g_thread;
 static K_THREAD_STACK_DEFINE(g_stack, 4096);
@@ -152,54 +153,47 @@ static void scan_roms(void)
 static void draw_status(bool force)
 {
 	int pct = battery_cached_percent();
-	bool power = charger_input_present();
 	bool wifi = net_if_is_up(net_if_get_first_wifi());
+	int64_t now = k_uptime_get();
+	uint16_t battery_ink = pct < 0 ? COLOR_GRAY :
+		pct < 20 ? ((now / STATUS_MS) & 1 ? COLOR_RED : BAR_COLOR) :
+		pct < 35 ? RGB565(255, 140, 0) :
+		pct <= 50 ? COLOR_YELLOW : COLOR_GREEN;
 
-	g_status_time = k_uptime_get();
-	if (!force && pct == g_status_pct && power == g_status_power && wifi == g_status_wifi) {
-		return;
+	g_status_time = now;
+	if (force || wifi != g_status_wifi) {
+		g_status_wifi = wifi;
+		/* Wi-Fi: nested arcs and a dot; gray when the link is down. */
+		uint16_t ink = wifi ? COLOR_WHITE : COLOR_GRAY;
+		gfx_fill_rect(181, 7, 14, 2, ink);
+		gfx_fill_rect(179, 9, 2, 2, ink);
+		gfx_fill_rect(195, 9, 2, 2, ink);
+		gfx_fill_rect(183, 11, 10, 2, ink);
+		gfx_fill_rect(181, 13, 2, 2, ink);
+		gfx_fill_rect(193, 13, 2, 2, ink);
+		gfx_fill_rect(186, 15, 4, 2, ink);
+		gfx_fill_rect(187, 19, 2, 2, ink);
 	}
-	g_status_pct = pct;
-	g_status_power = power;
-	g_status_wifi = wifi;
-	gfx_fill_rect(148, 5, 92, 30, BAR_COLOR);
-
-	/* Wi-Fi: nested arcs and a dot; gray when the link is down. */
-	uint16_t ink = wifi ? COLOR_WHITE : COLOR_GRAY;
-	gfx_fill_rect(151, 9, 14, 2, ink);
-	gfx_fill_rect(149, 11, 2, 2, ink);
-	gfx_fill_rect(165, 11, 2, 2, ink);
-	gfx_fill_rect(153, 13, 10, 2, ink);
-	gfx_fill_rect(151, 15, 2, 2, ink);
-	gfx_fill_rect(163, 15, 2, 2, ink);
-	gfx_fill_rect(156, 17, 4, 2, ink);
-	gfx_fill_rect(157, 21, 2, 2, ink);
-
-	/* Battery outline, terminal, and proportional fill. */
-	uint16_t fill = power ? COLOR_GREEN : pct <= 15 ? COLOR_RED : HEADER_COLOR;
-	gfx_fill_rect(175, 9, 24, 14, DIM_COLOR);
-	gfx_fill_rect(199, 13, 2, 6, DIM_COLOR);
-	gfx_fill_rect(177, 11, 20, 10, BAR_COLOR);
-	if (pct >= 0) {
-		gfx_fill_rect(178, 12, 18 * pct / 100, 8, fill);
+	if (force || pct != g_status_pct || battery_ink != g_status_battery_ink) {
+		g_status_pct = pct;
+		g_status_battery_ink = battery_ink;
+		/* The colored outline remains visible even at zero charge. */
+		gfx_fill_rect(205, 7, 24, 14, battery_ink);
+		gfx_fill_rect(229, 11, 2, 6, battery_ink);
+		gfx_fill_rect(207, 9, 20, 10, BAR_COLOR);
+		if (pct >= 0) {
+			gfx_fill_rect(208, 10, 18 * pct / 100, 8, battery_ink);
+		}
 	}
-	char value[5];
-	if (pct < 0) {
-		strcpy(value, "--");
-	} else {
-		snprintf(value, sizeof(value), "%u%%", (unsigned)(uint8_t)pct);
-	}
-	gfx_draw_text(204, 12, value, power ? COLOR_GREEN : FG_COLOR, BAR_COLOR);
 }
 
 static void draw_header(void)
 {
 	gfx_fill_rect(0, 0, LCD_WIDTH, HEADER_HEIGHT, BAR_COLOR);
-	gfx_draw_text_box(8, 5, 132, "ROM LIBRARY", 0, HEADER_COLOR, BAR_COLOR);
 
 	char counts[24];
 	snprintf(counts, sizeof(counts), "%d game%s", g_rom_count, g_rom_count == 1 ? "" : "s");
-	gfx_draw_text(8, 27, counts, DIM_COLOR, BAR_COLOR);
+	gfx_draw_text_box(8, 8, 160, counts, 0, DIM_COLOR, BAR_COLOR);
 	draw_status(true);
 }
 
@@ -242,11 +236,11 @@ static void draw_list(void)
 		const char *name = g_roms[i].name;
 		char trim[NAME_W / GFX_LARGE_FONT_W + 1];
 		if (sel) {
-			gfx_draw_text_box(8, row_y + 5, 12, ">", 0, fg, bg);
+			gfx_draw_text_box(8, row_y + NAME_Y_OFFSET, GFX_LARGE_FONT_W, ">", 0, fg, bg);
 			memcpy(g_scroll_name, g_roms[i].name, sizeof(g_scroll_name));
 			g_scroll_name[sizeof(g_scroll_name) - 1] = '\0';
 			g_scroll_selected = i;
-			g_scroll_y = row_y + 5;
+			g_scroll_y = row_y + NAME_Y_OFFSET;
 			g_scroll_overflow = MAX(0, (int)strlen(g_scroll_name) * GFX_LARGE_FONT_W - NAME_W);
 			name = g_scroll_name;
 		} else if (strlen(name) >= sizeof(trim)) {
@@ -254,7 +248,7 @@ static void draw_list(void)
 			memcpy(trim + sizeof(trim) - 4, "...", 4);
 			name = trim;
 		}
-		gfx_draw_text_box(NAME_X, row_y + 5, NAME_W, name, 0, fg, bg);
+		gfx_draw_text_box(NAME_X, row_y + NAME_Y_OFFSET, NAME_W, name, 0, fg, bg);
 	}
 	g_scroll_epoch = k_uptime_get();
 }
@@ -262,7 +256,7 @@ static void draw_list(void)
 static void tick_menu(void)
 {
 	int64_t now = k_uptime_get();
-	if (now - g_status_time >= 1000) {
+	if (now - g_status_time >= STATUS_MS) {
 		draw_status(false);
 	}
 	if (!g_scroll_overflow || g_selected != g_scroll_selected ||
@@ -439,7 +433,7 @@ static void menu_thread_fn(void *a, void *b, void *c)
 	for (;;) {
 		struct emu_stats stats;
 		emu_get_stats(&stats);
-		int rc = k_sem_take(&g_kick, K_MSEC(!stats.running && g_scroll_overflow ? SCROLL_MS : 1000));
+		int rc = k_sem_take(&g_kick, K_MSEC(!stats.running && g_scroll_overflow ? SCROLL_MS : STATUS_MS));
 		emu_get_stats(&stats);
 		if (rc) {
 			if (!stats.running) {
