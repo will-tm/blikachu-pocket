@@ -7,7 +7,7 @@
 #
 # Options:
 #   clean/pristine  - Clean build
-#   mcuboot         - Build signed app, UF2 and ISP factory image
+#   mcuboot         - Build MCUboot app, UF2 and ISP factory image
 #   flash           - Update over USB DFU; FLASH_PORT selects BootROM ISP
 
 set -e
@@ -242,13 +242,9 @@ if [ -n "$ZEPHYR_SDK_INSTALL_DIR" ]; then
 fi
 
 if [ -n "$MCUBOOT" ]; then
-    mkdir -p .keys
-    if [ ! -f .keys/mcuboot.pem ]; then
-        (umask 077; python deps/bootloader/mcuboot/scripts/imgtool.py keygen -k .keys/mcuboot.pem -t ecdsa-p256)
-    fi
     [ -f build/domains.yaml ] || PRISTINE="--pristine=always"
     west build -b "${BOARD}" -d build "${SCRIPT_DIR}" ${PRISTINE} --sysbuild \
-        -- -DBOARD_ROOT="$SCRIPT_DIR" "-DSB_CONFIG_BOOT_SIGNATURE_KEY_FILE=\"$SCRIPT_DIR/.keys/mcuboot.pem\"" "${WEST_EXTRA_CMAKE[@]}"
+        -- -DBOARD_ROOT="$SCRIPT_DIR" '-DSB_CONFIG_BOOT_SIGNATURE_KEY_FILE=""' "${WEST_EXTRA_CMAKE[@]}"
 else
     [ ! -f build/domains.yaml ] || PRISTINE="--pristine=always"
     west build -b "${BOARD}" -d build "${SCRIPT_DIR}" ${PRISTINE} --no-sysbuild \

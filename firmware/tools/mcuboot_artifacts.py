@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package bootloader, signed application and UF2 without hashing mutable slots into BFNP."""
+"""Package bootloader, MCUboot application and UF2 without hashing mutable slots into BFNP."""
 import hashlib
 import struct
 import subprocess
@@ -14,7 +14,6 @@ SLOT1 = 0x43F000
 FW_END = 0x800000
 FAMILY = 0xF3478D12
 XIP = 0xA0000000
-KEY = ROOT / ".keys/mcuboot.pem"
 
 
 def check_uf2(path, image):
@@ -58,9 +57,9 @@ def main():
     if hashlib.sha256(blob[0x2000:]).digest() != blob[0x88:0xA8]:
         raise ValueError("BootROM image hash mismatch")
     if len(image) > min(SLOT1 - SLOT0 - 0x2000, 3584 * 1024):
-        raise ValueError("Signed application does not fit update slots/staging buffer")
+        raise ValueError("MCUboot application does not fit update slots/staging buffer")
     subprocess.run([sys.executable, str(ROOT / "deps/bootloader/mcuboot/scripts/imgtool.py"),
-                    "verify", "-k", str(KEY), str(app)], check=True)
+                    "verify", str(app)], check=True)
     factory = bytearray(b"\xff" * FW_END)
     factory[:len(blob)] = blob
     factory[SLOT0:SLOT0 + len(image)] = image

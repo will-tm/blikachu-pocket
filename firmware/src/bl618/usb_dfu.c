@@ -1,7 +1,7 @@
 /*
  * USB DFU firmware update (dfu-util) for the BL618 boards.
  *
- * Payload: a signed MCUboot application or a legacy whole-flash image
+ * Payload: an MCUboot application or a legacy whole-flash image
  * (see fw_install.h). DNLOAD blocks are staged in RAM (dfu_staging_buf(),
  * provided by the app) — flash is untouched until the final zero-length
  * DNLOAD has passed fw_image_check(); a bad image fails the transfer.

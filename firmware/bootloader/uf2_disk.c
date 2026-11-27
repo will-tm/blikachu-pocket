@@ -85,7 +85,7 @@ static int disk_read(struct disk_info *disk, uint8_t *buf, uint32_t start, uint3
 	return 0;
 }
 
-/* The signed image begins with the MCUboot header and ends at its TLV table. */
+/* The MCUboot image begins with the MCUboot header and ends at its TLV table. */
 static size_t image_len(size_t cap)
 {
 	if (cap < 0x200 || sys_get_le32(staged) != 0x96f3b83d || sys_get_le16(staged + 8) != 0x200) {

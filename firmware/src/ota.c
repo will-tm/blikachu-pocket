@@ -5,7 +5,7 @@
  *   - USB DFU (src/bl618/usb_dfu.c): dfu-util with the build's update image
  *   - WiFi OTA: upload the same image to /NAND:/update.bin via the WebUI,
  *     then `ota apply` (shell) or the WebUI's OTA page.
- * MCUboot builds stage a signed image in the secondary slot. The BootROM
+ * MCUboot builds stage an image in the secondary slot. The BootROM
  * USB ISP (BOOT button) is the hardware recovery path.
  *
  * SPDX-License-Identifier: Apache-2.0

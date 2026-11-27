@@ -1,4 +1,4 @@
-/* Signed updates are staged to the secondary slot; MCUboot validates and swaps. */
+/* Updates are staged to the secondary slot; MCUboot validates and swaps. */
 #include <errno.h>
 #include <zephyr/dfu/flash_img.h>
 #include <zephyr/dfu/mcuboot.h>

@@ -4,7 +4,7 @@
  * Image format: the whole-flash image the BootROM boots from offset 0
  * (build/zephyr/zephyr.dfu.bin, tools/bflb_whole_img.py): an 8 KiB BFNP
  * boot header holding the app length (+0x84) and its SHA-256 (+0x88),
- * followed by the app. MCUboot builds accept a signed application image
+ * followed by the app. MCUboot builds accept an MCUboot application image
  * and stage it in the secondary slot instead.
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -19,8 +19,8 @@
 
 /**
  * Validate a staged image's format and bounds. The legacy format also
- * checks the BFNP header CRC and SHA-256; MCUboot authenticates the
- * signed candidate before swapping slots.
+ * checks the BFNP header CRC and SHA-256; MCUboot validates the
+ * candidate image before swapping slots.
  *
  * @param img Staged image.
  * @param len In: bytes staged. Out: header + app length (trailing
