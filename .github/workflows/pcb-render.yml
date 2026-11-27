@@ -3,7 +3,7 @@ name: bl618 pcb 3d render
 # Renders a 3D visualization of the BL618 hardware PCB with kicad-cli (KiCad 10,
 # official container incl. 3D model libs). On changes to the board it refreshes
 # hardware/pcb-3d.png (used in the README) and commits it back to main; on PRs
-# it just uploads the render as an artifact for review.
+# it uploads a short-lived render artifact for review when storage is available.
 
 on:
   push:
@@ -41,13 +41,6 @@ jobs:
             --rotate '-30,0,-45' \
             hardware/blikachu-pocket.kicad_pcb
 
-      - name: Upload render artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: bl618-pcb-3d
-          path: hardware/pcb-3d.png
-          if-no-files-found: error
-
       # Keep the README image current: commit the refreshed render back to main.
       # PRs only get the artifact above. The push trigger is path-filtered to
       # hardware/**, so committing the excluded image does not re-trigger the job.
@@ -63,3 +56,14 @@ jobs:
             git commit -m "ci: refresh bl618 PCB 3D render [skip ci]"
             git push
           fi
+
+      # The committed image is the deliverable on main; previews are optional.
+      - name: Upload render preview
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: bl618-pcb-3d
+          path: hardware/pcb-3d.png
+          if-no-files-found: error
+          retention-days: 3
