@@ -1,0 +1,52 @@
+--- a/boot/bootutil/src/image_validate.c
++++ b/boot/bootutil/src/image_validate.c
+@@ -256,6 +256,7 @@
+     BOOT_LOG_DBG("bootutil_img_validate: flash area %p", fap);
+ 
+     if (!bootutil_image_hdr_sizes_valid(hdr, fap, state == NULL ? 0 : BOOT_CURR_IMG(state))) {
++        BOOT_LOG_ERR("Invalid image header bounds");
+         rc = -1;
+         goto out;
+     }
+@@ -358,6 +359,8 @@
+ 
+             FIH_CALL(boot_fih_memequal, fih_rc, hash, buf, sizeof(hash));
+             if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
++                BOOT_LOG_ERR("Image hash mismatch: computed %02x%02x%02x%02x expected %02x%02x%02x%02x",
++                             hash[0], hash[1], hash[2], hash[3], buf[0], buf[1], buf[2], buf[3]);
+                 FIH_SET(fih_rc, FIH_FAILURE);
+                 goto out;
+             }
+@@ -383,6 +386,9 @@
+                 goto out;
+             }
+             key_id = bootutil_find_key(buf, len);
++            if (key_id < 0) {
++                BOOT_LOG_ERR("Image signing key not recognized");
++            }
+ #else
+             rc = LOAD_IMAGE_DATA(hdr, fap, off, key_buf, len);
+             if (rc) {
+@@ -566,6 +572,9 @@
+ #endif
+ #ifdef EXPECTED_SIG_TLV
+     FIH_SET(fih_rc, valid_signature);
++    if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
++        BOOT_LOG_ERR("Image signature verification failed");
++    }
+ #endif
+ #ifdef MCUBOOT_HW_ROLLBACK_PROT
+     if (FIH_NOT_EQ(security_counter_valid, FIH_SUCCESS)) {
+--- a/boot/bootutil/src/loader.c
++++ b/boot/bootutil/src/loader.c
+@@ -635,7 +635,9 @@
+     }
+ #endif
+     if (!boot_check_header_valid(state, slot)) {
+-        BOOT_LOG_DBG("boot_validate_slot: header validation failed %d", slot);
++        BOOT_LOG_ERR("Invalid slot %d header: magic=0x%lx size=%lu flags=0x%lx",
++                     slot, (unsigned long)hdr->ih_magic,
++                     (unsigned long)hdr->ih_img_size, (unsigned long)hdr->ih_flags);
+         fih_rc = FIH_FAILURE;
+     } else {
+         BOOT_HOOK_CALL_FIH(boot_image_check_hook, FIH_BOOT_HOOK_REGULAR,
