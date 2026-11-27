@@ -232,15 +232,6 @@
 	ranges = <0x0 0xa8000000 DT_SIZE_K(512)>;
 };
 
-/* Backlight soft-PWM tick source (see platform_bl618.c). */
-&timer {
-	status = "okay";
-};
-
-&timer0 {
-	status = "okay";
-};
-
 &pinctrl {
 	uart0_default: uart0_default {
 		group1 {

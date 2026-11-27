@@ -32,7 +32,7 @@ static void backlight_apply(int level)
 	/* Quadratic: LED luminance vs perception — level 1 ≈ 1% duty,
 	 * 10 = 100%.
 	 */
-	/* Timer soft-PWM (platform_bl618.c) — the bflb PWM's global
+	/* Kernel-timer soft-PWM (platform_bl618.c) — the bflb PWM's global
 	 * period is owned by the buzzer.
 	 */
 	extern void platform_backlight_set_pct(int pct);

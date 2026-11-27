@@ -6,7 +6,6 @@
  */
 
 #include <zephyr/device.h>
-#include <zephyr/drivers/counter.h>
 #include <zephyr/drivers/clock_control.h>
 #include <zephyr/dt-bindings/clock/bflb_bl61x_clock.h>
 #include <zephyr/sys/sys_io.h>
@@ -46,74 +45,63 @@ static void pwr_latch_set(bool hold)
 	gpio_pin_set_dt(&pwr_clk, 0);
 }
 
-/* ---- Backlight soft-PWM on timer0 ----
- *
- * The bflb PWM block has ONE period register shared by all channels;
- * every buzzer note retuned it and modulated the backlight. The
- * backlight pin (GPIO28) is now plain GPIO toggled by timer0 alarms:
- * top-of-period -> high, duty alarm -> low, ~1 kHz.
+/* ---- Backlight soft-PWM ----
+ * The hardware PWM channels share the buzzer's period. Use the kernel's
+ * monotonic timeout queue for the independent 1 kHz backlight instead.
+ * A delayed expiry is recovered by the kernel timer scheduler; no absolute
+ * peripheral comparator can remain stranded behind a free-running counter.
  */
+#define BL_PERIOD_US 1000U
 static const struct gpio_dt_spec g_bl_gpio =
 	GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), backlight_gpios);
-static const struct device *const g_bl_timer = DEVICE_DT_GET(DT_NODELABEL(timer0));
-static uint32_t g_bl_top;          /* ticks per period */
-static volatile uint32_t g_bl_duty; /* ticks high; 0 = off, >=top = solid */
+static uint32_t g_bl_duty_us;
 
-static void bl_duty_alarm(const struct device *dev, uint8_t chan, uint32_t ticks,
-			  void *user_data)
+static void bl_duty_cb(struct k_timer *timer)
 {
-	ARG_UNUSED(dev);
-	ARG_UNUSED(chan);
-	ARG_UNUSED(ticks);
-	ARG_UNUSED(user_data);
-	(void)gpio_pin_set_dt(&g_bl_gpio, 0);
-}
-
-static void bl_top_cb(const struct device *dev, void *user_data)
-{
-	ARG_UNUSED(user_data);
-	uint32_t duty = g_bl_duty;
-
-	if (duty == 0) {
+	ARG_UNUSED(timer);
+	if (g_bl_duty_us < BL_PERIOD_US) {
 		(void)gpio_pin_set_dt(&g_bl_gpio, 0);
-		return;
 	}
-	(void)gpio_pin_set_dt(&g_bl_gpio, 1);
-	if (duty >= g_bl_top) {
-		return; /* solid on — no low edge */
-	}
-
-	struct counter_alarm_cfg alarm = {
-		.callback = bl_duty_alarm,
-		.ticks = duty,
-	};
-
-	(void)counter_set_channel_alarm(dev, 0, &alarm);
 }
+K_TIMER_DEFINE(bl_duty_timer, bl_duty_cb, NULL);
+
+static void bl_top_cb(struct k_timer *timer)
+{
+	ARG_UNUSED(timer);
+	uint32_t duty = g_bl_duty_us;
+
+	(void)gpio_pin_set_dt(&g_bl_gpio, duty != 0);
+	if (duty > 0 && duty < BL_PERIOD_US) {
+		k_timer_start(&bl_duty_timer, K_USEC(duty), K_NO_WAIT);
+	}
+}
+K_TIMER_DEFINE(bl_top_timer, bl_top_cb, NULL);
 
 void platform_backlight_set_pct(int pct)
 {
 	static bool ready;
 
-	if (!device_is_ready(g_bl_timer) || !device_is_ready(g_bl_gpio.port)) {
+	if (!device_is_ready(g_bl_gpio.port)) {
 		return;
 	}
+	unsigned int key = irq_lock();
 	if (!ready) {
-		struct counter_top_cfg top = {
-			.callback = bl_top_cb,
-			.ticks = counter_get_frequency(g_bl_timer) / 1000, /* 1 kHz */
-		};
-
-		(void)gpio_pin_configure_dt(&g_bl_gpio, GPIO_OUTPUT_INACTIVE);
-		g_bl_top = top.ticks;
-		if (counter_set_top_value(g_bl_timer, &top) != 0 ||
-		    counter_start(g_bl_timer) != 0) {
+		if (gpio_pin_configure_dt(&g_bl_gpio, GPIO_OUTPUT_INACTIVE) != 0) {
+			irq_unlock(key);
 			return;
 		}
 		ready = true;
 	}
-	pct = CLAMP(pct, 0, 100);
-	g_bl_duty = (uint32_t)((uint64_t)g_bl_top * pct / 100);
+	k_timer_stop(&bl_top_timer);
+	k_timer_stop(&bl_duty_timer);
+	g_bl_duty_us = BL_PERIOD_US * CLAMP(pct, 0, 100) / 100U;
+	/* Endpoints are static GPIO states, independent of timer delivery. */
+	(void)gpio_pin_set_dt(&g_bl_gpio, g_bl_duty_us != 0);
+	if (g_bl_duty_us > 0 && g_bl_duty_us < BL_PERIOD_US) {
+		k_timer_start(&bl_duty_timer, K_USEC(g_bl_duty_us), K_NO_WAIT);
+		k_timer_start(&bl_top_timer, K_USEC(BL_PERIOD_US), K_USEC(BL_PERIOD_US));
+	}
+	irq_unlock(key);
 }
 
 void platform_init(void)
