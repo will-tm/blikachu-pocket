@@ -53,9 +53,9 @@ def main():
     bfnp = BUILD / "mcuboot/zephyr/bootloader.bfnp.bin"
     check_symbols(boot.with_suffix(".elf"), {
         "blikachu_uf2_init", "blikachu_uf2_complete", "blikachu_dfu_requested",
-        "dfu_screen_message", "dfu_screen_progress", "sys_arch_reboot",
+        "dfu_screen_message", "dfu_screen_progress", "sys_arch_reboot", "bl618_enter_isp",
     })
-    check_symbols(app.with_name("zephyr.elf"), {"cmd_dfu", "boot_write_img_confirmed"})
+    check_symbols(app.with_name("zephyr.elf"), {"cmd_dfu", "cmd_isp", "bl618_enter_isp", "boot_write_img_confirmed"})
     for domain in ("mcuboot", "firmware"):
         if mapped_address(domain, "slot0_partition") != XIP + SLOT0:
             raise ValueError(f"{domain}: UF2 target disagrees with mapped primary partition")
@@ -79,6 +79,12 @@ def main():
     subprocess.run([sys.executable, str(ROOT / "deps/zephyr/scripts/build/uf2conv.py"), "--convert",
                     "-b", hex(XIP + SLOT0), "-f", hex(FAMILY), "-o", str(uf2), str(app)], check=True)
     check_uf2(uf2, image)
+    isp = bytearray(512)
+    struct.pack_into("<8I", isp, 0, 0x0A324655, 0x9E5D5157, 0x2001,
+                     0, 256, 0, 1, FAMILY)
+    isp[32:51] = b"BLIKACHU-ENTER-ISP\0"
+    struct.pack_into("<I", isp, 508, 0x0AB16F30)
+    (BUILD / "isp.uf2").write_bytes(isp)
     print(f"Factory: {path} ({len(factory)} bytes, ends at storage boundary)")
     print(f"Update: {uf2}")
 

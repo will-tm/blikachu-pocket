@@ -76,6 +76,7 @@ Build the two-slot firmware and recovery bootloader with:
 The build produces `build/factory.bin` (one-time ISP installation),
 `build/firmware.uf2` (drag-and-drop update), and
 `build/firmware/zephyr/zephyr.signed.bin` (application DFU and WiFi OTA; Zephyr retains the `.signed.bin` filename).
+The build also produces `build/isp.uf2`, a 512-byte BootROM ISP request.
 The development build uses SHA-256 integrity validation without signature
 authentication.
 
@@ -91,6 +92,10 @@ or issue `dfu` in the application shell, to open the `BLIKACHU` UF2 drive.
 Copy `build/firmware.uf2` to the drive and keep power connected until the
 bootloader completes the update. MCUboot validates and swaps the
 candidate from the secondary slot; the application confirms after startup.
+Copy `build/isp.uf2` to the recovery drive to enter BootROM ISP without
+holding BOOT. The request does not install an image or modify flash.
+After ISP programming, fully power-cycle the board to clear the retained
+boot selection if it returns to ISP instead of starting the application.
 For a USB DFU transfer directly to the running application, use
 `dfu-util -d 2e8a:000a -D build/firmware/zephyr/zephyr.signed.bin`.
 

@@ -36,6 +36,7 @@
 LOG_MODULE_REGISTER(blikachu, LOG_LEVEL_INF);
 
 #include "platform.h"
+#include "bl618/reboot.h"
 
 static int cmd_reboot(const struct shell *sh, size_t argc, char **argv)
 {
@@ -49,6 +50,19 @@ static int cmd_reboot(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 SHELL_CMD_REGISTER(reboot, NULL, "Soft-reboot back into the firmware (warm reset)", cmd_reboot);
+
+static int cmd_isp(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	shell_print(sh, "Entering BootROM ISP...");
+	emu_quit();
+	emu_wait();
+	storage_unmount();
+	k_msleep(100);
+	bl618_enter_isp();
+}
+SHELL_CMD_REGISTER(isp, NULL, "Reset into BootROM ISP", cmd_isp);
 
 /* Power-off: blank the display, unmount storage and drop the power latch. */
 #include "sleep_icon.h" /* generated from assets/sleep.png */

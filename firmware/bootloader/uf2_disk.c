@@ -3,9 +3,12 @@
 #include <zephyr/drivers/disk.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/usb/class/usbd_msc.h>
+#include <zephyr/usb/usbd.h>
 #include <zephyr/sys/byteorder.h>
 #include <bootutil/bootutil_log.h>
 #include "uf2_disk.h"
+#include "usbd_dfu.h"
+#include "bl618/reboot.h"
 
 BOOT_LOG_MODULE_DECLARE(mcuboot);
 #define SECTOR_SIZE 512u
@@ -42,6 +45,7 @@ static unsigned blocks, received;
 static unsigned progress;
 static atomic_t writing;
 static atomic_t rx_percent;
+static atomic_t isp_pending;
 static uint8_t verify[FLASH_SECTOR];
 static const char info[] = "UF2 Bootloader BLikachu MCUboot\r\nModel: BLikachu Pocket\r\nBoard-ID: BLikachu-Pocket-BL618\r\n";
 
@@ -109,6 +113,16 @@ static bool is_uf2(const uint8_t *b)
 {
 	return sys_get_le32(b) == 0x0a324655 && sys_get_le32(b + 4) == 0x9e5d5157 &&
 	       sys_get_le32(b + 508) == 0x0ab16f30;
+}
+
+static bool is_isp_request(const uint8_t *b)
+{
+	static const char command[] = "BLIKACHU-ENTER-ISP";
+	return is_uf2(b) && sys_get_le32(b + 8) == 0x2001 &&
+	       sys_get_le32(b + 12) == 0 && sys_get_le32(b + 16) == UF2_DATA &&
+	       sys_get_le32(b + 20) == 0 && sys_get_le32(b + 24) == 1 &&
+	       sys_get_le32(b + 28) == UF2_FAMILY &&
+	       !memcmp(b + 32, command, sizeof(command));
 }
 
 static void read_sector(uint8_t *b, uint32_t lba)
@@ -244,6 +258,16 @@ static void receive_progress(struct k_work *work)
 }
 static K_WORK_DEFINE(receive_progress_work, receive_progress);
 
+static void enter_isp_work(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	BOOT_LOG_INF("Entering BootROM ISP");
+	dfu_screen_message("ISP MODE", "Connect flash tool");
+	(void)usbd_disable(boot_usb_dfu_get_context());
+	bl618_enter_isp();
+}
+static K_WORK_DELAYABLE_DEFINE(isp_work, enter_isp_work);
+
 static int receive(const uint8_t *b)
 {
 	uint32_t block = sys_get_le32(b + 20), total = sys_get_le32(b + 24);
@@ -302,6 +326,15 @@ static int disk_write(struct disk_info *disk, const uint8_t *buf, uint32_t start
 	while (count--) {
 		if (start < DATA_SECTOR) {
 			memcpy(medium->metadata[start], buf, SECTOR_SIZE);
+		} else if (is_isp_request(buf)) {
+			if (!atomic_get(&isp_pending)) {
+				if (!atomic_cas(&writing, 0, 1)) {
+					return -EBUSY;
+				}
+				atomic_set(&isp_pending, 1);
+				k_work_schedule(&isp_work, K_MSEC(500));
+			}
+			cache_sector(start, buf);
 		} else if (is_uf2(buf)) {
 			int rc = receive(buf);
 			if (rc) {
