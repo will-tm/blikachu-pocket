@@ -1,13 +1,13 @@
-/* Read-only synthetic FAT16 metadata; only validated UF2 sectors become updates. */
+/* A virtual FAT16 medium; only validated UF2 data sectors become updates. */
 #include <string.h>
 #include <zephyr/drivers/disk.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/usb/class/usbd_msc.h>
 #include <zephyr/sys/byteorder.h>
-#include <zephyr/logging/log.h>
+#include <bootutil/bootutil_log.h>
 #include "uf2_disk.h"
 
-LOG_MODULE_DECLARE(mcuboot);
+BOOT_LOG_MODULE_DECLARE(mcuboot);
 #define SECTOR_SIZE 512u
 #define DISK_SECTORS 32768u
 #define FAT_SECTORS 128u
@@ -15,18 +15,33 @@ LOG_MODULE_DECLARE(mcuboot);
 #define DATA_SECTOR (ROOT_SECTOR + 2u)
 #define UF2_DATA 256u
 #define UF2_FAMILY 0xf3478d12u
-#define IMAGE_BASE DT_REG_ADDR(DT_NODELABEL(slot0_partition))
-#define FLASH_BASE DT_REG_ADDR(DT_NODELABEL(sf_bank1))
+#define IMAGE_BASE PARTITION_ADDRESS(slot0_partition)
 #define STAGING_SIZE DT_REG_SIZE(DT_NODELABEL(core_ram))
 #define BLOCK_MAX (STAGING_SIZE / UF2_DATA)
 #define FLASH_SECTOR 4096u
 #define SLOT1_ID PARTITION_ID(slot1_partition)
+#define CACHE_SECTORS 512u
+#define CACHE_MARK 0x8000u
+
+/* Retain FAT/root mutations and small host metadata files. UF2 data is
+ * reconstructed from the staged image, so no second copy is required. */
+struct uf2_medium {
+	uint8_t metadata[DATA_SECTOR][SECTOR_SIZE];
+	uint16_t sector_map[DISK_SECTORS];
+	uint16_t cache_lba[CACHE_SECTORS];
+	uint8_t cache[CACHE_SECTORS][SECTOR_SIZE];
+	unsigned cache_next;
+};
+BUILD_ASSERT(sizeof(struct uf2_medium) <= DT_REG_SIZE(DT_NODELABEL(psram)));
+BUILD_ASSERT(BLOCK_MAX < CACHE_MARK);
+static struct uf2_medium *const medium = (void *)DT_REG_ADDR(DT_NODELABEL(psram));
 
 static uint8_t *const staged = (uint8_t *)DT_REG_ADDR(DT_NODELABEL(core_ram));
 static uint8_t bitmap[DIV_ROUND_UP(BLOCK_MAX, 8)];
 static unsigned blocks, received;
 static unsigned progress;
 static atomic_t writing;
+static atomic_t rx_percent;
 static uint8_t verify[FLASH_SECTOR];
 static const char info[] = "UF2 Bootloader BLikachu MCUboot\r\nModel: BLikachu Pocket\r\nBoard-ID: BLikachu-Pocket-BL618\r\n";
 
@@ -41,7 +56,7 @@ static void root_file(uint8_t *buf)
 	sys_put_le32(sizeof(info) - 1, buf + 28);
 }
 
-static void read_sector(uint8_t *b, uint32_t sector)
+static void initial_sector(uint8_t *b, uint32_t sector)
 {
 	memset(b, 0, SECTOR_SIZE);
 	if (sector == 0) {
@@ -69,6 +84,57 @@ static void read_sector(uint8_t *b, uint32_t sector)
 		root_file(b);
 	} else if (sector == DATA_SECTOR) {
 		memcpy(b, info, sizeof(info) - 1);
+	}
+}
+
+static void cache_sector(uint32_t lba, const uint8_t *buf)
+{
+	uint16_t entry = medium->sector_map[lba];
+	unsigned idx;
+	if (entry & CACHE_MARK) {
+		idx = (entry & ~CACHE_MARK) - 1;
+	} else {
+		idx = medium->cache_next++ % CACHE_SECTORS;
+		uint16_t old = medium->cache_lba[idx];
+		if (old && medium->sector_map[old] == (CACHE_MARK | (idx + 1))) {
+			medium->sector_map[old] = 0;
+		}
+		medium->cache_lba[idx] = lba;
+		medium->sector_map[lba] = CACHE_MARK | (idx + 1);
+	}
+	memcpy(medium->cache[idx], buf, SECTOR_SIZE);
+}
+
+static bool is_uf2(const uint8_t *b)
+{
+	return sys_get_le32(b) == 0x0a324655 && sys_get_le32(b + 4) == 0x9e5d5157 &&
+	       sys_get_le32(b + 508) == 0x0ab16f30;
+}
+
+static void read_sector(uint8_t *b, uint32_t lba)
+{
+	if (lba < DATA_SECTOR) {
+		memcpy(b, medium->metadata[lba], SECTOR_SIZE);
+		return;
+	}
+	uint16_t entry = medium->sector_map[lba];
+	if (entry & CACHE_MARK) {
+		memcpy(b, medium->cache[(entry & ~CACHE_MARK) - 1], SECTOR_SIZE);
+		return;
+	}
+	memset(b, 0, SECTOR_SIZE);
+	if (entry && entry <= blocks) {
+		unsigned block = entry - 1;
+		sys_put_le32(0x0a324655, b);
+		sys_put_le32(0x9e5d5157, b + 4);
+		sys_put_le32(0x2000, b + 8);
+		sys_put_le32(IMAGE_BASE + block * UF2_DATA, b + 12);
+		sys_put_le32(UF2_DATA, b + 16);
+		sys_put_le32(block, b + 20);
+		sys_put_le32(blocks, b + 24);
+		sys_put_le32(UF2_FAMILY, b + 28);
+		memcpy(b + 32, staged + block * UF2_DATA, UF2_DATA);
+		sys_put_le32(0x0ab16f30, b + 508);
 	}
 }
 
@@ -107,6 +173,11 @@ static size_t image_len(size_t cap)
 static void reset_transfer(void)
 {
 	memset(bitmap, 0, sizeof(bitmap));
+	for (unsigned i = DATA_SECTOR; i < DISK_SECTORS; i++) {
+		if (!(medium->sector_map[i] & CACHE_MARK)) {
+			medium->sector_map[i] = 0;
+		}
+	}
 	blocks = received = 0;
 	progress = 0;
 	atomic_clear(&writing);
@@ -158,22 +229,29 @@ static void install(struct k_work *work)
 		return;
 	}
 failed:
-	LOG_ERR("UF2 install failed: %d", rc);
+	BOOT_LOG_ERR("UF2 install failed: %d", rc);
 	reset_transfer();
 	dfu_screen_message("UPDATE FAILED", "Copy UF2 again");
 }
 static K_WORK_DELAYABLE_DEFINE(install_work, install);
 
+static void receive_progress(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	if (!atomic_get(&writing)) {
+		dfu_screen_progress(atomic_get(&rx_percent));
+	}
+}
+static K_WORK_DEFINE(receive_progress_work, receive_progress);
+
 static int receive(const uint8_t *b)
 {
-	if (sys_get_le32(b) != 0x0a324655 || sys_get_le32(b + 4) != 0x9e5d5157 ||
-	    sys_get_le32(b + 508) != 0x0ab16f30) {
-		return 0; /* Host filesystem bookkeeping. */
-	}
 	uint32_t block = sys_get_le32(b + 20), total = sys_get_le32(b + 24);
 	if (sys_get_le32(b + 8) != 0x2000 || sys_get_le32(b + 28) != UF2_FAMILY ||
 	    sys_get_le32(b + 16) != UF2_DATA || !total || total > BLOCK_MAX || block >= total ||
-	    sys_get_le32(b + 12) != FLASH_BASE + IMAGE_BASE + block * UF2_DATA) {
+	    sys_get_le32(b + 12) != IMAGE_BASE + block * UF2_DATA) {
+		BOOT_LOG_ERR("UF2 rejected: block %u/%u address 0x%08x", block, total,
+			     sys_get_le32(b + 12));
 		return -EINVAL;
 	}
 	if (atomic_get(&writing)) {
@@ -183,8 +261,9 @@ static int receive(const uint8_t *b)
 		reset_transfer();
 	}
 	if (!blocks) {
-		dfu_screen_message("RECEIVING UF2", "Keep USB connected");
-		dfu_screen_progress(0);
+		BOOT_LOG_INF("UF2 receive: %u blocks", total);
+		atomic_set(&rx_percent, 0);
+		k_work_submit(&receive_progress_work);
 	}
 	blocks = total;
 	uint8_t bit = BIT(block % 8);
@@ -201,7 +280,9 @@ static int receive(const uint8_t *b)
 	received++;
 	unsigned next = received * 100 / blocks;
 	if (next / 10 != progress / 10) {
-		dfu_screen_progress(next);
+		BOOT_LOG_INF("UF2 receive: %u%%", next);
+		atomic_set(&rx_percent, next);
+		k_work_submit(&receive_progress_work);
 		progress = next;
 	}
 	if (received == blocks) {
@@ -219,10 +300,18 @@ static int disk_write(struct disk_info *disk, const uint8_t *buf, uint32_t start
 		return -EINVAL;
 	}
 	while (count--) {
-		int rc = receive(buf);
-		if (rc) {
-			return rc;
+		if (start < DATA_SECTOR) {
+			memcpy(medium->metadata[start], buf, SECTOR_SIZE);
+		} else if (is_uf2(buf)) {
+			int rc = receive(buf);
+			if (rc) {
+				return rc;
+			}
+			medium->sector_map[start] = sys_get_le32(buf + 20) + 1;
+		} else {
+			cache_sector(start, buf);
 		}
+		start++;
 		buf += SECTOR_SIZE;
 	}
 	return 0;
@@ -252,5 +341,12 @@ USBD_DEFINE_MSC_LUN(uf2, "UF2", "BLikachu", "UF2 Recovery", "1.00");
 
 int blikachu_uf2_init(void)
 {
+	memset(medium, 0, sizeof(*medium));
+	for (unsigned i = 0; i < DATA_SECTOR; i++) {
+		initial_sector(medium->metadata[i], i);
+	}
+	uint8_t sector[SECTOR_SIZE];
+	initial_sector(sector, DATA_SECTOR);
+	cache_sector(DATA_SECTOR, sector);
 	return disk_access_register(&disk);
 }

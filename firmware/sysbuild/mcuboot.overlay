@@ -7,3 +7,20 @@
 		mcuboot-button0 = &key_select;
 	};
 };
+
+/* Recovery prioritizes reliable flash reads over emulation clocks. */
+&clk_aupll {
+	top-frequency = <BL61X_AUPLL_TOP_FREQ>;
+};
+
+&clk_bclk {
+	divider = <4>;
+};
+
+&clk_flash {
+	divider = <2>;
+};
+
+&cpu0 {
+	clock-frequency = <DT_FREQ_M(320)>;
+};

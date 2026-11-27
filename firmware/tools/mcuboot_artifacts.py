@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Package bootloader, MCUboot application and UF2 without hashing mutable slots into BFNP."""
 import hashlib
+import re
 import struct
 import subprocess
 import sys
@@ -40,6 +41,12 @@ def check_symbols(path, required):
         raise ValueError(f"{path}: recovery symbols not linked: {sorted(missing)}")
 
 
+def mapped_address(domain, label):
+    header = (BUILD / domain / "zephyr/include/generated/zephyr/devicetree_generated.h").read_text()
+    node = re.search(rf"#define DT_N_NODELABEL_{label}\s+(\S+)", header)[1]
+    return int(re.search(rf"#define {node}_REG_IDX_0_VAL_ADDRESS\s+(\d+)", header)[1])
+
+
 def main():
     boot = BUILD / "mcuboot/zephyr/zephyr.bin"
     app = BUILD / "firmware/zephyr/zephyr.signed.bin"
@@ -49,6 +56,9 @@ def main():
         "dfu_screen_message", "dfu_screen_progress", "sys_arch_reboot",
     })
     check_symbols(app.with_name("zephyr.elf"), {"cmd_dfu", "boot_write_img_confirmed"})
+    for domain in ("mcuboot", "firmware"):
+        if mapped_address(domain, "slot0_partition") != XIP + SLOT0:
+            raise ValueError(f"{domain}: UF2 target disagrees with mapped primary partition")
     subprocess.run([sys.executable, str(ROOT / "tools/bflb_whole_img.py"), str(boot), str(bfnp)], cwd=BUILD, check=True)
     blob, image = bfnp.read_bytes(), app.read_bytes()
     length = struct.unpack_from("<I", blob, 0x84)[0]
