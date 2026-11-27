@@ -14,6 +14,12 @@ LOG_MODULE_REGISTER(battery, LOG_LEVEL_INF);
 #define ADC_RESOLUTION  12
 
 static const struct device *const adc = DEVICE_DT_GET(DT_ALIAS(vbat_adc));
+static atomic_t g_percent = ATOMIC_INIT(-1);
+
+int battery_cached_percent(void)
+{
+	return atomic_get(&g_percent);
+}
 
 /* LiPo open-circuit voltage → charge, coarse piecewise map. */
 static const struct {
@@ -80,6 +86,7 @@ static void battery_work_fn(struct k_work *work)
 	int mv = battery_sample_mv(NULL);
 
 	if (mv >= 0) {
+		atomic_set(&g_percent, battery_percent(mv));
 		LOG_INF("battery: %d mV (%u%%)", mv, battery_percent(mv));
 	} else {
 		LOG_WRN("battery: adc_read failed (%d)", mv);

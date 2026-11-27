@@ -12,4 +12,7 @@ int battery_sample_mv(uint16_t *raw_out);
 /* Rough LiPo open-circuit-voltage -> percent map. */
 uint8_t battery_percent(uint16_t mv);
 
+/* Latest periodic charge estimate, or -1 before a successful sample. */
+int battery_cached_percent(void);
+
 #endif

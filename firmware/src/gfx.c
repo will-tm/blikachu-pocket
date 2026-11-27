@@ -332,6 +332,36 @@ void gfx_draw_text(int x, int y, const char *s, uint16_t fg, uint16_t bg)
 	}
 }
 
+void gfx_draw_text_box(int x, int y, int w, const char *s, unsigned offset_px,
+		       uint16_t fg, uint16_t bg)
+{
+	if (!display_dev || x < 0 || x >= LCD_WIDTH || y < 0 ||
+	    y + GFX_LARGE_FONT_H > LCD_HEIGHT || w <= 0) {
+		return;
+	}
+	w = MIN(w, LCD_WIDTH - x);
+	size_t len = strlen(s);
+
+	for (int row = 0; row < GFX_LARGE_FONT_H; row++) {
+		for (int col = 0; col < w; col++) {
+			unsigned px = offset_px + col;
+			unsigned idx = px / GFX_LARGE_FONT_W;
+			uint8_t ch = idx < len ? (uint8_t)s[idx] : ' ';
+			uint8_t bits = font8x8_basic[ch < 128 ? ch : '?'][row / 2];
+			unsigned bit = (px % GFX_LARGE_FONT_W) * 8 / GFX_LARGE_FONT_W;
+
+			g_blit_buf[row * w + col] = bits & BIT(bit) ? fg : bg;
+		}
+	}
+	struct display_buffer_descriptor desc = {
+		.buf_size = w * GFX_LARGE_FONT_H * sizeof(uint16_t),
+		.width = w,
+		.pitch = w,
+		.height = GFX_LARGE_FONT_H,
+	};
+	panel_write(x, y + LCD_VIEW_Y, &desc, g_blit_buf);
+}
+
 void gfx_draw_char_buf(uint16_t *buf, int stride, int buf_h, int x, int y, char c, uint16_t fg)
 {
 	uint8_t idx = (uint8_t)c;
