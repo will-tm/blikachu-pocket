@@ -1,0 +1,19 @@
+diff --git a/subsys/usb/device_next/usbd_init.c b/subsys/usb/device_next/usbd_init.c
+index 80f423b1fe7..f0e1d926133 100644
+--- a/subsys/usb/device_next/usbd_init.c
++++ b/subsys/usb/device_next/usbd_init.c
+@@ -35,6 +35,14 @@ static int assign_ep_addr(const struct device *dev,
+ 			ep = USB_EP_DIR_IN | idx;
+ 		} else {
+ 			ep = idx;
++			/* BLikachu's composite device shares four bidirectional FIFOs.
++			 * Keep CDC bulk IN (EP2) and MSC bulk IN (EP3) independent
++			 * of the continuously armed bulk OUT endpoints (EP1/EP4).
++			 */
++			if (IS_ENABLED(CONFIG_BOARD_BLIKACHU_POCKET) &&
++			    (idx == 2U || idx == 3U)) {
++				continue;
++			}
+ 		}
+ 
+ 		if (usbd_ep_bm_is_set(config_ep_bm, ep) ||
